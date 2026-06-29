@@ -260,19 +260,7 @@ const MendaeraCharts = (() => {
                 padding: { bottom: 32 },
               }
             : { display: false },
-          tooltip: {
-            backgroundColor: COLORS.text,
-            padding: 10,
-            cornerRadius: 4,
-            titleFont: { family: FONT.family, weight: FONT.weight },
-            bodyFont: { family: FONT.family },
-            callbacks: {
-              label: (ctx) => {
-                const suffix = showPercent ? '%' : ''
-                return ` ${ctx.dataset.label}: ${ctx.parsed.y}${suffix}`
-              },
-            },
-          },
+          tooltip: { enabled: false },
         },
       },
       plugins: [
