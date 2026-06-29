@@ -296,12 +296,20 @@ const MendaeraCharts = (() => {
 
               const match = label.match(/^(.+?)(\s*\(.+\))$/)
               if (match) {
+                const baselineY = topY - 6
+                const name = match[1].trim().toUpperCase()
+                const num = match[2].trim().toUpperCase()
+
+                // Name (large, dark)
                 c.fillStyle = COLORS.text
                 c.font = `${FONT.weight} ${sz.labelTop}px ${FONT.family}`
-                c.fillText(match[1].toUpperCase(), xPos, topY - sz.topLineGap)
+                c.fillText(name, xPos, baselineY)
+                const nameWidth = c.measureText(name).width
+
+                // Number (small, light) on the same line, right after the name
                 c.fillStyle = COLORS.textLight
                 c.font = `${FONT.weight} ${sz.labelTopSub}px ${FONT.family}`
-                c.fillText(match[2].trim().toUpperCase(), xPos, topY - 1)
+                c.fillText(num, xPos + nameWidth + sz.labelTopSub * 0.4, baselineY)
               } else {
                 c.fillStyle = COLORS.text
                 c.font = `${FONT.weight} ${sz.labelTop}px ${FONT.family}`
