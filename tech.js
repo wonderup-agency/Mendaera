@@ -223,6 +223,8 @@ const MendaeraCharts = (() => {
           padding: { top: s.topPadding, right: 0, left: 0 },
         },
         animation: false,
+        // Disable all hover/pointer interactions on the bars
+        events: [],
         onResize(chart, size) {
           s = getSizes(size.width, size.height, numCat, numDs)
           chart.options.layout.padding.top = s.topPadding
