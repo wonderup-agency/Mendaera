@@ -13,7 +13,7 @@ document.querySelectorAll('[data-component="home-video"]').forEach((videoCompone
   const showControls = videoComponent.dataset.controls === 'true'
   const playOnView = videoComponent.dataset.playOnView === 'true'
   const noAnimation = videoComponent.dataset.noAnimation === 'true'
-
+  console.log("test")
   video.loop = true
   video.muted = true
 
@@ -416,10 +416,10 @@ const MendaeraCharts = (() => {
     // Create chart immediately with grey bars visible, green bars at zero
     wrapper.classList.add('is-visible')
     const chart = MendaeraCharts.comparison('comparison-1', {
-      labels: ['NOVICE', 'EXPERIENCED', 'EXPERT'],
+      labels: ['NOVICE (200)', ' Mid-Tier (80)', 'EXPERT (80)'],
       datasets: [
-        { label: 'FREEHAND', data: [14, 27, 40] },
-        { label: 'ROBOT',    data: [74, 80, 90] },
+        { label: 'FREEHAND (180)', data: [14, 27, 40] },
+        { label: 'ROBOT (180)',    data: [74, 80, 90] },
       ],
       showPercent: true,
       delayAnimation: true,
@@ -443,42 +443,17 @@ const MendaeraCharts = (() => {
 mm.add('(min-width: 992px)', () => {
 const _ac = new AbortController()
 const _signal = _ac.signal
-const modalComponent = document.querySelector('[data-component="modal-product"]')
-if (modalComponent) {
-  const modal = document.querySelector('[data-modal="product-features"]')
-  const cards = modalComponent.querySelectorAll('[data-modal-tab]')
+const modal = document.querySelector('[data-modal="product-features"]')
+if (modal) {
+  const modalComponent = document.querySelector('[data-component="modal-product"]')
+  const cards = modalComponent ? modalComponent.querySelectorAll('[data-modal-tab]') : []
   const tabLinks = modal.querySelectorAll('[data-tab-link]')
-  const closeBtns = document.querySelectorAll('[data-modal-close="product-features"]')
 
-  let isOpen = false
-  let isAnimating = false
+  const tabsLinksWrapper = modal.querySelector('.product_modal-tabs-links-wrapper')
+  if (tabsLinksWrapper) tabsLinksWrapper.style.position = 'relative'
 
-  // Tell Lenis to ignore scroll events from inside the modal
-  modal.setAttribute('data-lenis-prevent', '')
-
-  // Remove Finsweet scroll-disable attrs — we handle scroll lock ourselves
-  // Finsweet overwrites overflow:hidden/auto on html/body and conflicts with our lock
-  modal.removeAttribute('fs-scrolldisable-element')
-  cards.forEach(card => card.removeAttribute('fs-scrolldisable-element'))
-  closeBtns.forEach(btn => btn.removeAttribute('fs-scrolldisable-element'))
-  // Also remove from backdrop if it has one
-  const backdrop = modal.querySelector('.product_modal-bg')
-  if (backdrop) backdrop.removeAttribute('fs-scrolldisable-element')
-
-  // Initial state — hidden, positioned for animation
-  gsap.set(modal, {
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
-    zIndex: 10000,
-    display: 'none',
-    flexDirection: 'column',
-    clipPath: 'inset(0 0 100% 0)',
-  })
-  document.documentElement.style.overflow = ''
-  document.body.style.overflow = ''
+  const SCROLL_OFFSET = 0
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
   const tabPanes = modal.querySelectorAll('.product_modal-tabs-pane')
   const paneWrapper = modal.querySelector('.product_modal-tabs-pane-wrapper')
@@ -546,7 +521,7 @@ if (modalComponent) {
         }
       } else if (isActive && wasActive) {
         // --- Already active (first load / tab switch) ---
-        // Don't clear clipPath — may be pre-set by openModal or setActiveTab for reveal
+        // Don't clear clipPath — may be pre-set by setActiveTab for reveal
         item.classList.add('is-active')
         item.style.display = 'flex'
         item.style.position = 'relative'
@@ -886,7 +861,7 @@ if (modalComponent) {
             firstVideo.currentTime = 0
             firstVideo.play().catch(() => {})
           }
-          // Reveal image/video with clip-path (same as openModal)
+          // Reveal image/video with clip-path
           gsap.fromTo(activeImg,
             { clipPath: 'inset(0 0 100% 0)' },
             { clipPath: 'inset(0 0 0% 0)', duration: 0.7, ease: 'power3.inOut',
@@ -902,14 +877,6 @@ if (modalComponent) {
       },
     })
   }
-
-  // ---- Close button icon (target inner element, e.g. SVG) ----
-  const closeIconWrapper = modal.querySelector('.modal_button-icon')
-  const closeIcon = closeIconWrapper && closeIconWrapper.firstElementChild
-
-  // ---- CTA element ----
-  const modalCta = modal.querySelector('.product_modal-cta')
-  if (modalCta) gsap.set(modalCta, { clipPath: 'inset(100% 0 0 0)' })
 
   // ---- Lenis — capture the running instance via prototype patch ----
   // Webflow doesn't expose the Lenis instance globally.
@@ -936,186 +903,48 @@ if (modalComponent) {
     return null
   }
 
-  // ---- Scroll lock ----
-  // Uses CAPTURE PHASE so events are intercepted BEFORE Lenis sees them.
-  // stopPropagation prevents the event from reaching Lenis's handler entirely.
-  const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' ', 'PageUp', 'PageDown', 'Home', 'End'])
-
-  function blockWheel(e) {
-    if (paneWrapper && paneWrapper.contains(e.target)) return
-    e.preventDefault()
-    e.stopPropagation()
-  }
-  function blockTouch(e) {
-    if (paneWrapper && paneWrapper.contains(e.target)) return
-    e.preventDefault()
-    e.stopPropagation()
-  }
-  function blockKeys(e) {
-    if (!SCROLL_KEYS.has(e.key)) return
-    if (paneWrapper && paneWrapper.contains(e.target)) return
-    e.preventDefault()
-  }
-
-  let _savedPaddingRight = ''
-
-  function lockScroll() {
+  // ---- Smooth scroll to inline section (uses Lenis when available) ----
+  function scrollToModal() {
     const lenis = getLenis()
-    if (lenis) lenis.stop()
-
-    // Measure scrollbar width BEFORE hiding overflow
-    const scrollbarW = window.innerWidth - document.documentElement.clientWidth
-    _savedPaddingRight = document.body.style.paddingRight
-    if (scrollbarW > 0) {
-      const currentPadding = parseInt(getComputedStyle(document.body).paddingRight, 10) || 0
-      document.body.style.paddingRight = (currentPadding + scrollbarW) + 'px'
+    if (lenis && !prefersReducedMotion) {
+      lenis.scrollTo(modal, { offset: SCROLL_OFFSET, duration: 1.2 })
+    } else {
+      modal.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'start' })
     }
-
-    document.documentElement.style.setProperty('overflow', 'hidden', 'important')
-    document.body.style.setProperty('overflow', 'hidden', 'important')
-    document.addEventListener('wheel', blockWheel, { passive: false, capture: true })
-    document.addEventListener('touchmove', blockTouch, { passive: false, capture: true })
-    document.addEventListener('keydown', blockKeys, { capture: true })
-  }
-
-  function unlockScroll() {
-    document.removeEventListener('wheel', blockWheel, { capture: true })
-    document.removeEventListener('touchmove', blockTouch, { capture: true })
-    document.removeEventListener('keydown', blockKeys, { capture: true })
-    const lenis = getLenis()
-    if (lenis) lenis.start()
-
-    requestAnimationFrame(() => {
-      document.body.style.paddingRight = _savedPaddingRight
-      document.documentElement.style.removeProperty('overflow')
-      document.body.style.removeProperty('overflow')
-    })
-  }
-
-  // ---- Open modal ----
-  function openModal(tabIndex) {
-    if (isOpen || isAnimating) return
-    isAnimating = true
-
-    modal.setAttribute('data-modal-state', 'open')
-    lockScroll()
-    ScrollTrigger.getAll().forEach(st => st.disable(false))
-
-    gsap.set(modal, { display: 'flex' })
-    // Reset tab index so setActiveTab runs fresh
-    activeTabIndex = -1
-    setActiveTab(tabIndex)
-
-    // Reveal the active image wrapper with clip-path (same pattern as CTA)
-    const activePane = tabPanes[tabIndex]
-    if (activePane) {
-      const activeImageWrapper = activePane.querySelector('.product_modal-tab-image-wrapper.is-active')
-      if (activeImageWrapper) {
-        gsap.fromTo(activeImageWrapper,
-          { clipPath: 'inset(0 0 100% 0)' },
-          { clipPath: 'inset(0 0 0% 0)', duration: 0.7, ease: 'power3.inOut', delay: 0.35,
-            onComplete: () => gsap.set(activeImageWrapper, { clipPath: '' }) }
-        )
-      }
-    }
-    // Position pill after modal is visible and layout is calculated
-    requestAnimationFrame(function () {
-      movePill(tabIndex, false)
-    })
-
-    // Rotate close icon to X
-    if (closeIcon) {
-      gsap.fromTo(closeIcon, { rotation: 0 }, {
-        rotation: 45,
-        duration: 0.5,
-        ease: 'power2.out',
-        delay: 0.3,
-      })
-    }
-
-    // Reveal CTA from bottom to top (inverse of modal)
-    if (modalCta) {
-      gsap.fromTo(modalCta,
-        { clipPath: 'inset(100% 0 0 0)' },
-        { clipPath: 'inset(0% 0 0 0)', duration: 0.7, ease: 'power3.inOut', delay: 0.35 }
-      )
-    }
-
-    gsap.to(modal, {
-      clipPath: 'inset(0 0 0% 0)',
-      duration: 0.7,
-      ease: 'power3.inOut',
-      onComplete: () => {
-        isOpen = true
-        isAnimating = false
-      },
-    })
-  }
-
-  // ---- Close modal ----
-  function closeModal() {
-    if (!isOpen || isAnimating) return
-    isAnimating = true
-    stopAutoAdvance()
-
-    // Pause all videos in the modal
-    modal.querySelectorAll('[data-modal-video="video"]').forEach((v) => v.pause())
-
-    // Rotate close icon back before modal finishes closing
-    if (closeIcon) {
-      gsap.to(closeIcon, {
-        rotation: 0,
-        duration: 0.35,
-        ease: 'power2.in',
-      })
-    }
-
-    // Fade CTA out quickly, then reset clipPath once modal is hidden
-    if (modalCta) {
-      gsap.to(modalCta, { opacity: 0, duration: 0.25, ease: 'power2.in' })
-    }
-
-    gsap.to(modal, {
-      clipPath: 'inset(0 0 100% 0)',
-      duration: 0.7,
-      ease: 'power3.inOut',
-      onComplete: () => {
-        // Reset CTA for next open
-        if (modalCta) gsap.set(modalCta, { opacity: 1, clipPath: 'inset(100% 0 0 0)' })
-        gsap.set(modal, { display: 'none' })
-        modal.setAttribute('data-modal-state', 'closed')
-        unlockScroll()
-        // Re-enable ScrollTriggers but delay refresh to sync with overflow removal
-        ScrollTrigger.getAll().forEach(st => st.enable())
-        requestAnimationFrame(() => ScrollTrigger.refresh())
-
-        isOpen = false
-        isAnimating = false
-      },
-    })
   }
 
   // ---- Event listeners ----
 
-  // Cards → open modal with corresponding tab
+  // Cards → scroll to inline section + activate matching tab
+  // Match by [data-modal-tab] value against [data-tab-link]; fallback to card index
   cards.forEach((card, index) => {
-    card.addEventListener('click', () => openModal(index), { signal: _signal })
+    card.addEventListener('click', () => {
+      const value = card.getAttribute('data-modal-tab')
+      let targetIndex = -1
+      if (value) {
+        tabLinks.forEach((link, i) => {
+          if (link.getAttribute('data-tab-link') === value) targetIndex = i
+        })
+      }
+      if (targetIndex === -1 && index < tabLinks.length) targetIndex = index
+      scrollToModal()
+      if (targetIndex !== -1 && targetIndex !== activeTabIndex) {
+        setActiveTab(targetIndex, !prefersReducedMotion)
+      }
+    }, { signal: _signal })
   })
+
   tabLinks.forEach((link, index) => {
-    link.addEventListener('click', () => setActiveTab(index, true), { signal: _signal })
+    link.addEventListener('click', () => setActiveTab(index, !prefersReducedMotion), { signal: _signal })
   })
-  closeBtns.forEach((btn) => {
-    btn.addEventListener('click', closeModal, { signal: _signal })
-  })
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeModal()
-  }, { signal: _signal })
+
+  // Initialize first tab active on load (no animation) — content is inline
+  setActiveTab(0, false)
 }
 
 return () => {
   _ac.abort()
   if (typeof stopAutoAdvance === 'function') stopAutoAdvance()
-  if (typeof isOpen !== 'undefined' && isOpen) closeModal()
 }
 })
 
