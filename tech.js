@@ -75,6 +75,8 @@ document.querySelectorAll('[data-component="home-video"]').forEach((videoCompone
           end: '+=100%',
           scrub: true,
           pin: true,
+          // recalcula los valores del tween (rem / %) en cada refresh -> resize
+          invalidateOnRefresh: true,
         },
       })
       tl.to(wrapper, {
@@ -328,6 +330,16 @@ const MendaeraCharts = (() => {
               }
               c.restore()
             })
+          },
+        },
+        // Plugin: mantiene el gradiente metalico en sync con la altura del chart.
+        // Sin esto, en resize las barras verdes conservan el gradiente creado con
+        // las coordenadas viejas (getPrimaryGradient cachea por altura).
+        {
+          id: 'primaryGradientSync',
+          afterLayout(chart) {
+            if (!gradientApplied || primaryIdx === -1 || !chart.chartArea) return
+            chart.data.datasets[primaryIdx].backgroundColor = getPrimaryGradient(chart.ctx, chart.chartArea)
           },
         },
         // Plugin: draw % labels based on current data values
@@ -734,8 +746,13 @@ if (modal) {
   // ---- Sliding pill indicator ----
   const tabMenu = tabLinks[0] && tabLinks[0].parentElement
   var pill = null
+  var pillResizeObserver = null
+  var _pillRaf = null
   if (tabMenu) {
     tabMenu.style.position = 'relative'
+    // Si quedo un pill de un ciclo anterior de matchMedia (resize cruzando 992px), se descarta
+    const stalePill = tabMenu.querySelector('.tab-pill')
+    if (stalePill) stalePill.remove()
     pill = document.createElement('div')
     pill.className = 'tab-pill'
     pill.style.cssText =
@@ -775,6 +792,35 @@ if (modal) {
     } else {
       gsap.set(pill, props)
     }
+  }
+
+  // ---- Resize: el pill vive en px (left/width medidos), hay que recalcularlo ----
+  function repositionPill() {
+    if (!pill || activeTabIndex < 0) return
+    gsap.killTweensOf(pill)
+    movePill(activeTabIndex, false)
+  }
+
+  function schedulePillReposition() {
+    if (_pillRaf) cancelAnimationFrame(_pillRaf)
+    _pillRaf = requestAnimationFrame(() => {
+      _pillRaf = null
+      repositionPill()
+    })
+  }
+
+  if (tabMenu && typeof ResizeObserver !== 'undefined') {
+    // cubre resize del window, cambios de layout del menu y carga de fuentes
+    pillResizeObserver = new ResizeObserver(schedulePillReposition)
+    pillResizeObserver.observe(tabMenu)
+    tabLinks.forEach((link) => pillResizeObserver.observe(link))
+  }
+  window.addEventListener('resize', schedulePillReposition, { signal: _signal })
+  window.addEventListener('orientationchange', schedulePillReposition, { signal: _signal })
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => {
+      if (pill && pill.isConnected) schedulePillReposition()
+    })
   }
 
   // ---- Pause all videos inside a pane ----
@@ -967,6 +1013,10 @@ if (modal) {
 return () => {
   _ac.abort()
   if (typeof stopAutoAdvance === 'function') stopAutoAdvance()
+  // declarados con `var` dentro del if (modal) -> visibles aca por hoisting
+  if (typeof _pillRaf !== 'undefined' && _pillRaf) cancelAnimationFrame(_pillRaf)
+  if (typeof pillResizeObserver !== 'undefined' && pillResizeObserver) pillResizeObserver.disconnect()
+  if (typeof pill !== 'undefined' && pill) pill.remove()
 }
 })
 
@@ -1273,29 +1323,41 @@ mm.add('(max-width: 991px)', () => {
 
   return () => {
     _ac.abort()
-    if (openCard) { closeCard(openCard); openCard = null }
+    openCard = null
     // Destroy all dynamic videos
     for (const [, video] of cardVideos) {
       video.pause()
       video.remove()
     }
     cardVideos.clear()
-    // Reset dropdowns and images
+    // Reset: se borran los estilos inline (alturas en px, clip-paths, stacking de
+    // imagenes) para que al pasar a desktop manden el CSS y el otro contexto
     allCards.forEach((card) => {
       const dropdown = card.querySelector('.product-overview_card-tablet')
-      if (dropdown) gsap.set(dropdown, { height: 0, overflow: 'hidden' })
-      const textItems = dropdown ? dropdown.querySelectorAll('.product_modal-tab-text-item') : []
-      textItems.forEach((t) => gsap.set(t, { clipPath: 'inset(0 100% 0 0)' }))
+      if (dropdown) {
+        gsap.killTweensOf(dropdown)
+        gsap.set(dropdown, { clearProps: 'height,overflow,visibility' })
+        dropdown.querySelectorAll('.product_modal-tab-text-item').forEach((t) => {
+          gsap.killTweensOf(t)
+          gsap.set(t, { clearProps: 'clipPath' })
+        })
+      }
       const cta = card.querySelector('.product-overview_card-tablet .product_modal-cta')
-      if (cta) gsap.set(cta, { clipPath: 'inset(0 0 100% 0)' })
-      const images = card.querySelectorAll('.product-overview_card-image')
-      images.forEach((img) => {
-        if (!img.classList.contains('is-main')) {
-          gsap.set(img, { opacity: 0 })
-        } else {
-          gsap.set(img, { opacity: 1 })
-        }
+      if (cta) {
+        gsap.killTweensOf(cta)
+        gsap.set(cta, { clearProps: 'clipPath' })
+      }
+      const imageWrapper = card.querySelector('.product-overview_card-image-wrapper')
+      if (imageWrapper) imageWrapper.style.position = ''
+      card.querySelectorAll('.product-overview_card-image').forEach((img) => {
+        gsap.killTweensOf(img)
+        gsap.set(img, { clearProps: 'opacity,display,position,top,left,width,height,objectFit' })
       })
+      const icon = card.querySelector('.icon_plus')
+      if (icon) {
+        gsap.killTweensOf(icon)
+        gsap.set(icon, { clearProps: 'rotation,transform' })
+      }
     })
   }
 })
