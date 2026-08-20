@@ -13,7 +13,6 @@ document.querySelectorAll('[data-component="home-video"]').forEach((videoCompone
   const showControls = videoComponent.dataset.controls === 'true'
   const playOnView = videoComponent.dataset.playOnView === 'true'
   const noAnimation = videoComponent.dataset.noAnimation === 'true'
-  console.log("test")
   video.loop = true
   video.muted = true
 
@@ -136,7 +135,10 @@ const MendaeraCharts = (() => {
       labelTopSub: isMobile ? 8 : isLandscape ? 9 : 11,
       value: isMobile ? 24 : isLandscape ? 30 : 40,
       legend: isMobile ? 10 : isLandscape ? 11 : 13,
-      topPadding: isMobile ? 28 : isLandscape ? 30 : 34,
+      // Space reserved above the plot area for the category labels.
+      // Must fit: label ascender + topGap + a little breathing room.
+      topPadding: isMobile ? 34 : isLandscape ? 36 : 44,
+      topGap: isMobile ? 8 : isLandscape ? 8 : 10,
       topLineGap: isMobile ? 10 : isLandscape ? 10 : 12,
       valueGap: isMobile ? 8 : isLandscape ? 10 : 14,
       barRadius: isMobile ? 3 : 4,
@@ -269,6 +271,16 @@ const MendaeraCharts = (() => {
         // Plugin: category labels at the top of each bar group
         {
           id: 'topLabels',
+          // Keep the reserved top padding in sync with the CANVAS size.
+          // (`s` is measured from the container, which can differ and leave
+          //  too little room → labels drawn above y=0 and clipped.)
+          beforeLayout(chart) {
+            if (!chart.width || !chart.height) return
+            const sz = getSizes(chart.width, chart.height, chart.data.labels.length, chart.data.datasets.length)
+            if (chart.options.layout.padding.top !== sz.topPadding) {
+              chart.options.layout.padding.top = sz.topPadding
+            }
+          },
           afterDraw(chart) {
             const { ctx: c, scales: { x }, width, height } = chart
             const sz = getSizes(width, height, chart.data.labels.length, chart.data.datasets.length)
@@ -276,34 +288,43 @@ const MendaeraCharts = (() => {
 
             chart.data.labels.forEach((label, i) => {
               if (!label) return
-              const xPos = x.getPixelForValue(i)
               c.save()
-              c.fillStyle = COLORS.textLight
               c.textAlign = 'left'
               c.textBaseline = 'bottom'
-
               c.letterSpacing = '0px'
 
               const match = label.match(/^(.+?)(\s*\(.+\))$/)
-              if (match) {
-                const baselineY = topY - 6
-                const name = match[1].trim().toUpperCase()
-                const num = match[2].trim().toUpperCase()
+              const name = (match ? match[1].trim() : label).toUpperCase()
+              const num = match ? match[2].trim().toUpperCase() : ''
 
-                // Name (large, dark)
-                c.fillStyle = COLORS.text
-                c.font = `${FONT.weight} ${sz.labelTop}px ${FONT.family}`
-                c.fillText(name, xPos, baselineY)
-                const nameWidth = c.measureText(name).width
+              // Measure first so we can keep the label inside the canvas
+              c.font = `${FONT.weight} ${sz.labelTop}px ${FONT.family}`
+              const nameMetrics = c.measureText(name)
+              const nameWidth = nameMetrics.width
+              const ascent = nameMetrics.actualBoundingBoxAscent || sz.labelTop * 0.8
 
-                // Number (small, light) on the same line, right after the name
+              let numWidth = 0
+              const numOffset = sz.labelTopSub * 0.4
+              if (num) {
+                c.font = `${FONT.weight} ${sz.labelTopSub}px ${FONT.family}`
+                numWidth = numOffset + c.measureText(num).width
+              }
+
+              // Never draw above the top edge of the canvas
+              const baselineY = Math.max(topY - sz.topGap, Math.ceil(ascent) + 1)
+              // Never overflow the right edge (labels are left-aligned on the group center)
+              const xPos = Math.max(0, Math.min(x.getPixelForValue(i), width - nameWidth - numWidth))
+
+              // Name (large, dark)
+              c.fillStyle = COLORS.text
+              c.font = `${FONT.weight} ${sz.labelTop}px ${FONT.family}`
+              c.fillText(name, xPos, baselineY)
+
+              // Number (small, light) on the same line, right after the name
+              if (num) {
                 c.fillStyle = COLORS.textLight
                 c.font = `${FONT.weight} ${sz.labelTopSub}px ${FONT.family}`
-                c.fillText(num, xPos + nameWidth + sz.labelTopSub * 0.4, baselineY)
-              } else {
-                c.fillStyle = COLORS.text
-                c.font = `${FONT.weight} ${sz.labelTop}px ${FONT.family}`
-                c.fillText(label.toUpperCase(), xPos, topY - 6)
+                c.fillText(num, xPos + nameWidth + numOffset, baselineY)
               }
               c.restore()
             })
@@ -330,7 +351,10 @@ const MendaeraCharts = (() => {
                       c.letterSpacing = '0px'
                       c.textAlign = 'center'
                       c.textBaseline = 'bottom'
-                      c.fillText(`${val}%`, bar.x, bar.y - sz.valueGap)
+                      // Clamp: the value never rises past the plot area top,
+                      // so it can't overlap the category labels or get clipped
+                      const minY = chart.chartArea.top + sz.value * 0.85
+                      c.fillText(`${val}%`, bar.x, Math.max(bar.y - sz.valueGap, minY))
                       c.restore()
                     })
                   })
@@ -1109,7 +1133,7 @@ mm.add('(max-width: 991px)', () => {
     })
   }
 
-  function openCardDropdown(card, cardIndex) {
+  function openCardDropdown(card, cardIndex, animate = true) {
     const dropdown = card.querySelector('.product-overview_card-tablet')
     const icon = card.querySelector('.icon_plus')
     if (!dropdown) return
@@ -1122,6 +1146,16 @@ mm.add('(max-width: 991px)', () => {
     })
     const cta = card.querySelector('.product-overview_card-tablet .product_modal-cta')
     if (cta) gsap.set(cta, { clipPath: 'inset(0 0 100% 0)' })
+
+    // Instant open (initial state on load): no animation, no scroll jump
+    if (!animate) {
+      gsap.set(dropdown, { height: 'auto', overflow: 'visible', visibility: 'visible' })
+      gsap.set(textItems, { clipPath: 'inset(0 0% 0 0)' })
+      if (cta) gsap.set(cta, { clipPath: 'inset(0% 0 0 0)' })
+      if (icon) gsap.set(icon, { rotation: 45 })
+      switchCardImage(card, cardIndex, 0)
+      return
+    }
 
     // Measure height without flashing content
     gsap.set(dropdown, { height: 'auto', visibility: 'hidden' })
@@ -1229,6 +1263,13 @@ mm.add('(max-width: 991px)', () => {
       }, { signal: _signal })
     })
   })
+
+  // First card starts open (no animation on load)
+  const firstCard = allCards[0]
+  if (firstCard && firstCard.querySelector('.product-overview_card-tablet')) {
+    openCardDropdown(firstCard, 0, false)
+    openCard = firstCard
+  }
 
   return () => {
     _ac.abort()
