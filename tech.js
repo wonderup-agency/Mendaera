@@ -1125,10 +1125,101 @@ mm.add('(max-width: 991px)', () => {
     }
   }
 
+  // ---- Auto-advance: los items de la card abierta se reproducen en loop ----
+  // Equivalente mobile de startAutoAdvance() de desktop: cuando termina el video
+  // del item actual pasa al siguiente, y despues del ultimo vuelve al primero.
+  const ITEM_FALLBACK_DURATION = 5 // segundos para items sin video
+  const METADATA_TIMEOUT = 8 // segundos: si no llega duration, se avanza igual
+  let _cardAuto = null
+
+  function stopCardAutoAdvance() {
+    if (!_cardAuto) return
+    const { video, onEnded, onError, onMeta, timer } = _cardAuto
+    if (timer) clearTimeout(timer)
+    if (video) {
+      video.removeEventListener('ended', onEnded)
+      video.removeEventListener('error', onError)
+      video.removeEventListener('loadedmetadata', onMeta)
+    }
+    _cardAuto = null
+  }
+
+  function startCardAutoAdvance(card, cardIndex, index) {
+    stopCardAutoAdvance()
+
+    const dropdown = card.querySelector('.product-overview_card-tablet')
+    if (!dropdown) return
+    // El largo de la cadena lo manda desktop (videoDataMap), no los text-items:
+    // si en el modal se agrega un 4to video, mobile lo reproduce igual
+    const videoCount = (videoDataMap[cardIndex] || []).length
+    const total = Math.max(dropdown.querySelectorAll('.product_modal-tab-text-item').length, videoCount)
+    if (total < 2) return
+
+    // Loop: despues del ultimo item vuelve al 0
+    const nextIndex = (index + 1) % total
+    function advance() {
+      // La card pudo cerrarse (o abrirse otra) mientras corria el timer
+      if (openCard !== card) return stopCardAutoAdvance()
+      setCardItem(card, cardIndex, nextIndex)
+    }
+
+    // Se crea el <video> del proximo item para que pida metadata desde ahora
+    // y el switch no arranque con un frame vacio
+    getOrCreateVideo(card, cardIndex, nextIndex)
+
+    const video = cardVideos.get(`${cardIndex}-${index}`)
+    if (!video) {
+      // Item sin video (fallback a imagen): timer fijo, igual que desktop
+      _cardAuto = { card, index, video: null, timer: setTimeout(advance, ITEM_FALLBACK_DURATION * 1000) }
+      return
+    }
+
+    video.loop = false // el loop es de la cadena, no del video suelto
+
+    const state = { card, index, video, timer: null }
+    // Red de seguridad por si 'ended' no llega (stall, codec, tab en background):
+    // se arma recien cuando se conoce la duracion real para no cortar el video.
+    function armSafetyTimer() {
+      if (state.timer) clearTimeout(state.timer)
+      const d = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : null
+      state.timer = setTimeout(advance, ((d || ITEM_FALLBACK_DURATION) - video.currentTime + 2) * 1000)
+    }
+
+    state.onEnded = advance
+    state.onError = advance
+    state.onMeta = () => { if (_cardAuto === state) armSafetyTimer() }
+
+    video.addEventListener('ended', state.onEnded)
+    video.addEventListener('error', state.onError)
+    video.addEventListener('loadedmetadata', state.onMeta)
+
+    _cardAuto = state
+    if (Number.isFinite(video.duration) && video.duration > 0) {
+      armSafetyTimer()
+    } else {
+      // Todavia sin metadata: se avanza si tampoco llega en METADATA_TIMEOUT
+      state.timer = setTimeout(advance, METADATA_TIMEOUT * 1000)
+    }
+  }
+
+  // Activa un item: texto activo + visual + reinicia la cadena desde ese item
+  function setCardItem(card, cardIndex, index) {
+    const dropdown = card.querySelector('.product-overview_card-tablet')
+    const textItems = dropdown ? dropdown.querySelectorAll('.product_modal-tab-text-item') : []
+    // Si hubiera mas videos que text-items, el highlight se queda en el ultimo
+    const activeText = Math.min(index, textItems.length - 1)
+    textItems.forEach((t, i) => t.classList.toggle('is-active', i === activeText))
+    switchCardImage(card, cardIndex, index)
+    startCardAutoAdvance(card, cardIndex, index)
+  }
+
   function closeCard(card) {
     const dropdown = card.querySelector('.product-overview_card-tablet')
     const icon = card.querySelector('.icon_plus')
     if (!dropdown) return
+
+    // Se corta la cadena antes de destruir los videos que escucha
+    if (_cardAuto && _cardAuto.card === card) stopCardAutoAdvance()
 
     // Pause and destroy dynamic videos
     const cardIndex = [...allCards].indexOf(card)
@@ -1203,7 +1294,7 @@ mm.add('(max-width: 991px)', () => {
       gsap.set(textItems, { clipPath: 'inset(0 0% 0 0)' })
       if (cta) gsap.set(cta, { clipPath: 'inset(0% 0 0 0)' })
       if (icon) gsap.set(icon, { rotation: 45 })
-      switchCardImage(card, cardIndex, 0)
+      setCardItem(card, cardIndex, 0)
       return
     }
 
@@ -1241,8 +1332,8 @@ mm.add('(max-width: 991px)', () => {
 
     if (icon) gsap.to(icon, { rotation: 45, duration: 0.35, ease: 'power2.out' })
 
-    // Show video for the first item (index 0) on open
-    switchCardImage(card, cardIndex, 0)
+    // Arranca en el item 0 y sigue solo con los demas
+    setCardItem(card, cardIndex, 0)
   }
 
   // Image/video crossfade: index 0 → is-main image, index N → video from modal
@@ -1308,8 +1399,8 @@ mm.add('(max-width: 991px)', () => {
     textItems.forEach((item, index) => {
       item.addEventListener('click', (e) => {
         e.stopPropagation()
-        textItems.forEach((t, i) => t.classList.toggle('is-active', i === index))
-        switchCardImage(card, cardIndex, index)
+        // El tap manual reinicia la cadena desde el item elegido
+        setCardItem(card, cardIndex, index)
       }, { signal: _signal })
     })
   })
@@ -1323,6 +1414,7 @@ mm.add('(max-width: 991px)', () => {
 
   return () => {
     _ac.abort()
+    stopCardAutoAdvance()
     openCard = null
     // Destroy all dynamic videos
     for (const [, video] of cardVideos) {
