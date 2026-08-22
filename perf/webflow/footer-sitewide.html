@@ -1,0 +1,195 @@
+<!-- FOOTER SITE-WIDE · Project settings > Custom code > Footer
+     Reemplaza TODO el contenido actual de ese campo.
+
+     Cambios respecto de lo que hay hoy:
+      - SplitText y Flip salen de aca: solo los usa home.js. Pasan al
+        footer de Home. registerPlugin queda solo con ScrollTrigger,
+        si no las otras paginas tiran ReferenceError.
+      - El tag de Finsweet sale de aca y va por pagina. En Home y
+        About no va. Es el cambio de +27 puntos en Home.
+      - Lenis: version sin loop manual de rAF, sin querySelector por
+        evento de scroll y sin estilos inline. -->
+
+<script src="https://cdn.prod.website-files.com/gsap/3.15.0/gsap.min.js"></script>
+<script src="https://cdn.prod.website-files.com/gsap/3.15.0/ScrollTrigger.min.js"></script>
+<script>gsap.registerPlugin(ScrollTrigger)</script>
+
+<script src="https://unpkg.com/lenis@1.2.3/dist/lenis.min.js"></script>
+<script>
+// ============================================================
+// Lenis + nav auto-hide — reemplaza el embed actual del footer
+// site-wide. Envolver en <script>…</script> al pegar en Webflow.
+//
+// Que cambia respecto de la version anterior:
+//  - autoRaf en lugar del loop manual de requestAnimationFrame
+//  - el nodo del nav se resuelve una vez, no en cada evento de scroll
+//  - el estado va por classList y solo se escribe cuando cambia, en lugar
+//    de setear style.transform inline en cada tick
+//  - sin dependencia de jQuery para el arranque
+//  - respeta prefers-reduced-motion: ahi no se hijackea el scroll
+// ============================================================
+
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+const lenis = reduceMotion
+  ? null
+  : new Lenis({
+      autoRaf: true,
+      prevent: (node) => node.closest('[data-w-lightbox]') !== null,
+    })
+
+if (lenis) {
+  // Arranca detenido para que no compita con el scroll restaurado del browser
+  lenis.stop()
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => lenis.start(), { once: true })
+  } else {
+    lenis.start()
+  }
+}
+
+// TODO Designer: agregar data-nav="component" al wrapper del nav y sacar el
+// fallback por clase.
+const nav = document.querySelector('[data-nav="component"], .nav_component')
+
+if (nav) {
+  const HIDE_AT = 50
+  let hidden = null
+
+  function syncNav(scroll) {
+    const shouldHide = scroll >= HIDE_AT
+    // Sin este guard el toggle escribe (y fuerza recalculo de estilos) en cada
+    // frame de scroll, no solo cuando el estado cambia.
+    if (shouldHide === hidden) return
+    hidden = shouldHide
+    nav.classList.toggle('is-nav-hidden', shouldHide)
+  }
+
+  syncNav(window.scrollY)
+
+  if (lenis) {
+    lenis.on('scroll', ({ scroll }) => syncNav(scroll))
+  } else {
+    addEventListener('scroll', () => syncNav(window.scrollY), { passive: true })
+  }
+}
+</script>
+
+<script>
+// Bloque existente del footer site-wide: muestra el boton de test env
+// solo en staging. Copiado tal cual del sitio, sin cambios.
+document.addEventListener('DOMContentLoaded', () => {
+    if(document.querySelector('.is-test-env')){
+      const button = document.querySelector('.is-test-env');
+      if (window.location.hostname === 'mendaera-wup.webflow.io') {
+        button.style.display = 'block'; 
+      } else {
+        button.style.display = 'none';
+      }
+    }
+  });
+</script>
+
+<script>
+// Bloque existente del footer site-wide: entradas fade-up / stagger y
+// animacion de las lineas divisorias. Copiado tal cual del sitio, sin cambios.
+// fade-up: individual elements fade in + slide up
+document.querySelectorAll('[data-animate="fade-up"]').forEach((el) => {
+  gsap.set(el, { opacity: 0, y: 20 })
+  gsap.to(el, {
+    opacity: 1,
+    y: 0,
+    duration: 0.7,
+    ease: 'power2.out',
+    scrollTrigger: {
+      trigger: el,
+      start: 'top 85%',
+      toggleActions: 'play none none none',
+    },
+  })
+})
+
+// stagger: direct children fade in + slide up with stagger
+document.querySelectorAll('[data-animate="stagger"]').forEach((container) => {
+  const children = container.children
+  if (!children.length) return
+  gsap.set(children, { opacity: 0, y: 20 })
+  gsap.to(children, {
+    opacity: 1,
+    y: 0,
+    duration: 0.7,
+    stagger: 0.12,
+    ease: 'power2.out',
+    scrollTrigger: {
+      trigger: container,
+      start: 'top 85%',
+      toggleActions: 'play none none none',
+    },
+  })
+})
+// ------------------------
+// Line Animations — horizontal (center→edges) & vertical (top→bottom)
+// ------------------------
+
+// Horizontal lines: scaleX 0→1 from center, then corner icons
+document.querySelectorAll('.horizontal_line-wrapper').forEach((wrapper) => {
+  const line = wrapper.querySelector('.horizontal_line')
+  const icons = wrapper.querySelectorAll('.horizontal_icon')
+  if (!line) return
+
+  gsap.set(line, { scaleX: 0, transformOrigin: '50% 50%' })
+  gsap.set(icons, { opacity: 0, scale: 0 })
+
+  const tl = gsap.timeline({
+    scrollTrigger: {
+      trigger: wrapper,
+      start: 'top 90%',
+      toggleActions: 'play none none none',
+    },
+  })
+
+  tl.to(line, {
+    scaleX: 1,
+    duration: 1.2,
+    ease: 'power2.inOut',
+  })
+  tl.to(icons, {
+    opacity: 1,
+    scale: 1,
+    duration: 0.4,
+    stagger: 0.15,
+    ease: 'back.out(1.4)',
+  }, '-=0.15')
+})
+
+// Vertical lines: scaleY 0→1 top to bottom, then plus icons
+document.querySelectorAll('.vertical_line-wrapper').forEach((wrapper) => {
+  const line = wrapper.querySelector('.vertical_line')
+  const icons = wrapper.querySelectorAll('.vertical_icon')
+  if (!line) return
+
+  gsap.set(line, { scaleY: 0, transformOrigin: '50% 0%' })
+  gsap.set(icons, { opacity: 0, scale: 0 })
+
+  const tl = gsap.timeline({
+    scrollTrigger: {
+      trigger: wrapper,
+      start: 'top 90%',
+      toggleActions: 'play none none none',
+    },
+  })
+
+  tl.to(line, {
+    scaleY: 1,
+    duration: 1.2,
+    ease: 'power2.inOut',
+  })
+  tl.to(icons, {
+    opacity: 1,
+    scale: 1,
+    duration: 0.4,
+    stagger: 0.15,
+    ease: 'back.out(1.4)',
+  }, '-=0.15')
+})
+</script>

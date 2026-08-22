@@ -1,0 +1,676 @@
+<!-- FOOTER DE HOME · Page settings > before </body>
+     SplitText y Flip vienen aca porque solo Home los usa. El footer
+     site-wide ya cargo gsap, y home.js hace registerPlugin con los
+     tres en su linea 3. Finsweet NO va en Home. -->
+
+<script src="https://cdn.prod.website-files.com/gsap/3.15.0/SplitText.min.js"></script>
+<script src="https://cdn.prod.website-files.com/gsap/3.15.0/Flip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/swiper@12/swiper-bundle.min.js"></script>
+
+<script>
+
+// GSAP plugins
+gsap.registerPlugin(ScrollTrigger, SplitText, Flip)
+// Lenis lo instancia el embed site-wide del footer (con el prevent de lightbox
+// y el toggle del nav). Aca creabamos una segunda instancia: dos motores de
+// smooth scroll y dos loops de rAF corriendo en paralelo en cada frame.
+// GSAP MatchMedia
+const mm = gsap.matchMedia()
+
+// append svg to last letter
+const lastLetters = document.querySelectorAll('[data-last-letter]')
+lastLetters.forEach((lastLetter) => {
+  const letterValue = lastLetter.getAttribute('data-last-letter')
+  const icon = document.querySelector(`[data-letter-icon="${letterValue}"]`)
+  if (icon) lastLetter.appendChild(icon)
+})
+
+// ------------------------
+// Hero section
+// ------------------------
+const homeHeroComponent = document.querySelector("[data-component='home-hero']")
+if (homeHeroComponent) {
+  const videoContainer = homeHeroComponent.querySelector("[data-home-hero='video-container']")
+  const initialWrapper = homeHeroComponent.querySelector("[data-home-hero='initial-wrapper']")
+  const finalWrapper = homeHeroComponent.querySelector("[data-home-hero='final-wrapper']")
+  const nonVideoEls = Array.from(videoContainer.children).filter((el) => el.tagName.toLowerCase() !== 'video')
+  const textWrapper = homeHeroComponent.querySelector("[data-home-hero='text-wrapper']")
+  const splitTextTarget = homeHeroComponent.querySelector("[data-split-text='chars']")
+  const stickyWrapper = homeHeroComponent.querySelector('.new-hero_sticky-wrapper')
+  const heroLayout = homeHeroComponent.querySelector('.new-hero_layout')
+
+  mm.add('(min-width: 768px)', () => {
+    let isInFinal = false
+    let reversedBySticky = false
+
+    function flipToFinal(duration = 1.5, ease = "power4.inOut") {
+      const state = Flip.getState(videoContainer)
+      finalWrapper.appendChild(videoContainer)
+      Flip.from(state, {
+        duration,
+        ease,
+        absolute: true,
+      })
+
+      gsap.killTweensOf(nonVideoEls)
+      gsap.killTweensOf(textWrapper)
+      gsap.to(nonVideoEls, { autoAlpha: 0, duration: 0.3 })
+      gsap.to(videoContainer, { borderRadius: '0.75rem' })
+
+      isInFinal = true
+    }
+
+    function flipToInitial(duration = 1) {
+      const state = Flip.getState(videoContainer)
+      initialWrapper.appendChild(videoContainer)
+      Flip.from(state, {
+        duration,
+        ease: 'power2.inOut',
+        absolute: true,
+      })
+
+      gsap.killTweensOf(nonVideoEls)
+      gsap.killTweensOf(textWrapper)
+      gsap.to(nonVideoEls, { autoAlpha: 1, duration: 1, delay: 1 })
+      gsap.to(videoContainer, { borderRadius: '0rem' })
+
+      isInFinal = false
+    }
+
+    ScrollTrigger.create({
+      start: 550,
+      onEnter: () => {
+        if (isInFinal) return
+        flipToFinal()
+        reversedBySticky = false
+      },
+      onLeaveBack: () => {
+        if (!isInFinal) return
+        flipToInitial()
+        reversedBySticky = false
+      },
+    })
+
+    // Reverse flip when sticky-wrapper unsticks; re-trigger when it re-sticks
+    if (stickyWrapper && heroLayout) {
+      ScrollTrigger.create({
+        trigger: heroLayout,
+        start: () => `top+=${stickyWrapper.offsetTop} top+=5rem`,
+        onLeaveBack: () => {
+          if (!isInFinal) return
+
+          // Kill every active tween on hero elements
+          gsap.killTweensOf(videoContainer)
+          gsap.killTweensOf(nonVideoEls)
+          gsap.killTweensOf(textWrapper)
+          gsap.killTweensOf(initialWrapper)
+
+          flipToInitial()
+          reversedBySticky = true
+        },
+        onEnter: () => {
+          if (!reversedBySticky || isInFinal) return
+          flipToFinal(1, "power4.out")
+          reversedBySticky = false
+        },
+      })
+    }
+  })
+
+  if (splitTextTarget) {
+    const splitChars = SplitText.create(splitTextTarget, {
+      type: 'chars',
+      tag: 'span',
+      smartWrap: true,
+    })
+
+    splitChars.chars.forEach((char) => {
+      char.style.webkitTextFillColor = 'var(--base-color--light-grey)'
+    })
+
+    const tl = gsap.timeline({ paused: true, ease: 'none' })
+
+    tl.to(splitChars.chars, {
+      ease: 'power1.out',
+      stagger: {
+        each: 0.1,
+        onStart() {
+          this.targets()[0].style.webkitTextFillColor = 'var(--base-color--black)'
+        },
+        onReverseComplete() {
+          this.targets()[0].style.webkitTextFillColor = 'var(--base-color--light-grey)'
+        },
+      },
+    })
+
+    if (textWrapper) {
+      ScrollTrigger.create({
+        trigger: textWrapper,
+        start: 'top+=50% bottom',
+        end: 'bottom 40%',
+        animation: tl,
+        scrub: true,
+        invalidateOnRefresh: true,
+      })
+    }
+  }
+}
+
+// ------------------------
+// Our solutions section
+// ------------------------
+const solutionsComponent = document.querySelector("[data-component='solutions']")
+if (solutionsComponent) {
+  const leftCard = solutionsComponent.querySelector("[data-solutions='left-card']")
+  const rightCard = solutionsComponent.querySelector("[data-solutions='right-card']")
+  const centerCard = solutionsComponent.querySelector("[data-solutions='center-card']")
+  const centerCardText = centerCard && centerCard.firstElementChild
+
+  mm.add('(min-width: 768px)', (context) => {
+    // Gap final del wrapper (el mismo que anima el timeline). Se usa tambien al medir
+    // para que la medicion coincida con el layout definitivo y no haya salto.
+    const FINAL_GAP = '1.5rem'
+    // Props que la animacion escribe inline en el center card
+    const SIZE_PROPS = 'width,height,paddingTop,paddingRight,paddingBottom,paddingLeft'
+    const SIZE_PROPS_CSS = [
+      'width',
+      'height',
+      'padding',
+      'padding-top',
+      'padding-right',
+      'padding-bottom',
+      'padding-left',
+    ]
+
+    let finalSize = null
+
+    function restoreStyleAttr(el, value) {
+      if (value === null) el.removeAttribute('style')
+      else el.setAttribute('style', value)
+    }
+
+    // Mide el tamano natural del center card: saca temporalmente los estilos inline
+    // de la animacion, lee el computed style y restaura todo antes de devolver.
+    function measureCenterCard() {
+      const prevCard = centerCard.getAttribute('style')
+      const prevWrapper = solutionsComponent.getAttribute('style')
+
+      SIZE_PROPS_CSS.forEach((prop) => centerCard.style.removeProperty(prop))
+      solutionsComponent.style.gap = FINAL_GAP
+
+      const cs = window.getComputedStyle(centerCard)
+      const size = {
+        width: cs.width,
+        height: cs.height,
+        paddingTop: cs.paddingTop,
+        paddingRight: cs.paddingRight,
+        paddingBottom: cs.paddingBottom,
+        paddingLeft: cs.paddingLeft,
+      }
+
+      restoreStyleAttr(centerCard, prevCard)
+      restoreStyleAttr(solutionsComponent, prevWrapper)
+      return size
+    }
+
+    function getFinalSize() {
+      if (!finalSize) finalSize = measureCenterCard()
+      return finalSize
+    }
+
+    function setInitialState() {
+      gsap.set(leftCard, { x: '50%', zIndex: 1 })
+      gsap.set(rightCard, { x: '-50%' })
+      // longhands (no el shorthand `padding`) para poder limpiarlos con clearProps
+      gsap.set(centerCard, {
+        width: 0,
+        height: 0,
+        paddingTop: 0,
+        paddingRight: 0,
+        paddingBottom: 0,
+        paddingLeft: 0,
+      })
+      if (centerCardText) gsap.set(centerCardText, { y: '150%' })
+    }
+
+    setInitialState()
+
+    const tl = gsap.timeline({ paused: true })
+
+    tl.to(leftCard, {
+      x: '0%',
+      duration: 1,
+      ease: 'power1.inOut',
+    })
+      .to(
+        rightCard,
+        {
+          x: '0%',
+          duration: 1,
+          ease: 'power2.inOut',
+        },
+        '='
+      )
+      .to(
+        centerCard,
+        {
+          duration: 0.75,
+          // function-based: se resuelven cuando arranca el tween, no al cargar la pagina
+          width: () => getFinalSize().width,
+          height: () => getFinalSize().height,
+          paddingTop: () => getFinalSize().paddingTop,
+          paddingRight: () => getFinalSize().paddingRight,
+          paddingBottom: () => getFinalSize().paddingBottom,
+          paddingLeft: () => getFinalSize().paddingLeft,
+          ease: 'power2.inOut',
+          onComplete: () => {
+            // Se borran los px inline: de aca en adelante el tamano lo maneja el CSS,
+            // asi el card acompana cualquier resize.
+            gsap.set(centerCard, { clearProps: SIZE_PROPS })
+          },
+        },
+        '+=.3'
+      )
+
+    if (centerCardText) {
+      tl.to(
+        centerCardText,
+        {
+          y: '0%',
+          duration: 0.3,
+        },
+        '-=0.5'
+      )
+    }
+
+    tl.to(
+      solutionsComponent,
+      {
+        gap: FINAL_GAP,
+      },
+      '1.5'
+    )
+
+    ScrollTrigger.create({
+      trigger: solutionsComponent,
+      start: 'top-=10% bottom',
+      onEnter: () => {
+        tl.play()
+      },
+    })
+
+    // ScrollTrigger dispara 'refresh' en cada resize (debounced).
+    // Si la animacion todavia no arranco, se re-arma el estado inicial con las
+    // medidas nuevas; si ya termino, el card no tiene px inline y no hay nada que hacer.
+    function handleRefresh() {
+      finalSize = null
+      if (tl.progress() !== 0 || tl.isActive()) return
+      // via context.add para que el gsap.set quede registrado en el contexto
+      // de matchMedia y se revierta al cruzar el breakpoint
+      if (context && typeof context.add === 'function') context.add(setInitialState)
+      else setInitialState()
+    }
+
+    ScrollTrigger.addEventListener('refresh', handleRefresh)
+
+    return () => {
+      ScrollTrigger.removeEventListener('refresh', handleRefresh)
+      // no dejar px / transforms inline para el breakpoint mobile
+      gsap.set(centerCard, { clearProps: SIZE_PROPS })
+      gsap.set([leftCard, rightCard], { clearProps: 'x,zIndex' })
+      if (centerCardText) gsap.set(centerCardText, { clearProps: 'y' })
+      gsap.set(solutionsComponent, { clearProps: 'gap' })
+    }
+  })
+
+  mm.add('(max-width: 767px)', () => {
+    ;[leftCard, centerCard, rightCard].forEach((card) => {
+      gsap.set(card, { y: 50, opacity: 0 })
+
+      ScrollTrigger.create({
+        trigger: card,
+        start: 'top 85%',
+        onEnter: () => {
+          gsap.to(card, {
+            y: 0,
+            opacity: 1,
+            duration: 0.6,
+            ease: 'power2.out',
+          })
+        },
+      })
+    })
+  })
+}
+
+// ------------------------
+// Principles section
+// ------------------------
+const principlesCards = document.querySelectorAll('[data-principle-card]')
+if (principlesCards.length > 0) {
+  const principlesSection = principlesCards[0].parentElement
+  if (principlesSection) {
+    mm.add('(min-width: 768px)', () => {
+      gsap.set(principlesCards, { y: 100, opacity: 0 })
+
+      ScrollTrigger.create({
+        trigger: principlesSection,
+        start: 'top 75%',
+        onEnter: () => {
+          gsap.to(principlesCards, {
+            y: 0,
+            opacity: 1,
+            duration: 0.6,
+            stagger: 0.15,
+            ease: 'power2.out',
+          })
+        },
+      })
+    })
+
+    mm.add('(max-width: 767px)', () => {
+      principlesCards.forEach((card) => {
+        gsap.set(card, { y: 50, opacity: 0 })
+
+        ScrollTrigger.create({
+          trigger: card,
+          start: 'top 85%',
+          onEnter: () => {
+            gsap.to(card, {
+              y: 0,
+              opacity: 1,
+              duration: 0.6,
+              ease: 'power2.out',
+            })
+          },
+        })
+      })
+    })
+  }
+}
+
+// ------------------------
+// Video
+// ------------------------
+document.querySelectorAll('[data-component="home-video"]').forEach((videoComponent) => {
+  const wrapper = videoComponent.querySelector('[data-home-video="wrapper"]')
+  const video = videoComponent.querySelector('[data-home-video="video"]')
+  const playButton = videoComponent.querySelector('[data-home-video="play-button"]')
+
+  // Hide play button and start autoplay with loop
+  playButton.style.display = 'none'
+  video.muted = true
+  video.loop = true
+
+  // Esta seccion esta debajo del fold: arrancar el video durante el parseo mete
+  // megabytes en la cola antes del primer pixel de contenido y le saca ancho de
+  // banda a las fuentes y los posters. Se reproduce al entrar al viewport.
+  const playOnEnter = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return
+        playOnEnter.unobserve(entry.target)
+        const played = video.play()
+        if (played && typeof played.catch === 'function') played.catch(() => {})
+      })
+    },
+    { rootMargin: '200px 0px' }
+  )
+  playOnEnter.observe(video)
+
+  video.addEventListener('click', () => {
+    if (video.paused) {
+      video.play()
+      playButton.style.display = 'none'
+    } else {
+      video.pause()
+      playButton.style.display = 'flex'
+    }
+  })
+
+  playButton.addEventListener('click', () => {
+    video.play()
+    playButton.style.display = 'none'
+  })
+
+  mm.add('(min-width: 992px)', () => {
+    const tl = gsap.timeline({
+      scrollTrigger: {
+        trigger: videoComponent,
+        start: 'top top',
+        end: '+=100%',
+        scrub: true,
+        pin: true,
+      },
+    })
+    tl.to(wrapper, {
+      maxWidth: '87rem',
+      height: '95%',
+      borderRadius: '0.75rem',
+    })
+  })
+})
+// ------------------------
+// Platform section
+// ------------------------
+const platfromComponent = document.querySelector('[data-component="platform-cards"]')
+if (platfromComponent) {
+  const nextButton = platfromComponent.querySelector("[data-platform-cards='next-button']")
+  const prevButton = platfromComponent.querySelector("[data-platform-cards='prev-button']")
+
+  mm.add('(max-width: 767px)', () => {
+    const swiper = new Swiper(platfromComponent, {
+      slidesPerView: 'auto',
+      navigation: {
+        nextEl: nextButton,
+        prevEl: prevButton,
+      },
+    })
+  })
+}
+
+// ------------------------
+// Technologies video/tabs
+// ------------------------
+const techVideoDesktop = document.querySelector("[data-tech-video='desktop']")
+const techVideoMobile = document.querySelector("[data-tech-video='mobile']")
+if (techVideoDesktop) {
+  mm.add('(min-width: 480px)', () => {
+    ScrollTrigger.create({
+      trigger: techVideoDesktop,
+      start: 'top bottom',
+      onEnter: () => {
+        techVideoDesktop.play()
+      },
+    })
+  })
+}
+if (techVideoMobile) {
+  mm.add('(max-width: 479px)', () => {
+    ScrollTrigger.create({
+      trigger: techVideoMobile,
+      start: 'top bottom',
+      onEnter: () => {
+        techVideoMobile.play()
+      },
+    })
+  })
+}
+
+// ------------------------
+// Gallery
+// ------------------------
+const galleryComponent = document.querySelector("[data-component='gallery']")
+if (galleryComponent) {
+  window.addEventListener('load', () => {
+    const centerImage = galleryComponent.querySelector("[data-gallery='center-image']")
+    const finalWidth = window.innerWidth > 767 ? '21rem' : '13rem'
+    gsap.fromTo(
+      centerImage,
+      {
+        width: 0,
+      },
+      {
+        scrollTrigger: {
+          trigger: galleryComponent,
+          start: 'top bottom',
+        },
+        width: finalWidth,
+        ease: 'power2.inOut',
+        duration: 1,
+      }
+    )
+  })
+}
+// ------------------------
+// Video Cards
+// desktop: play on hover | tablet y abajo: reproduce la card visible + tap
+// ------------------------
+const videoCards = document.querySelectorAll('[data-video-card="video"]')
+if (videoCards.length > 0) {
+  const DIM_OPACITY = 0.5
+  const FADE = 0.3
+  // La slide activa del swiper nunca llega al 100% (slidesPerView: 'auto' deja
+  // asomar la siguiente): 0.5 alcanza para distinguirla de la que asoma.
+  const VISIBLE_RATIO = 0.5
+
+  const cards = Array.from(videoCards)
+    .map((video) => {
+      const card = video.closest('.platform_cards_item-wrapper')
+      if (!card) return null
+      return { video, card, overlay: card.querySelector('.platform_overlay') }
+    })
+    .filter(Boolean)
+
+  const cardsByElement = new Map(cards.map((item) => [item.card, item]))
+
+  // El autoplay sin gesto del usuario solo pasa si el video esta muted, y sin
+  // playsinline iOS lo abre en fullscreen. Vienen del embed, los reforzamos
+  // para que no se rompa si alguien recrea el elemento en Webflow.
+  cards.forEach(({ video }) => {
+    video.loop = true
+    video.muted = true
+    video.playsInline = true
+  })
+
+  let active = null
+
+  // estado inicial: todas atenuadas; cada breakpoint decide despues cual reproduce
+  cards.forEach(({ overlay }) => {
+    if (overlay) gsap.set(overlay, { autoAlpha: DIM_OPACITY })
+  })
+
+  function playVideo(video) {
+    const played = video.play()
+    // play() rechaza si el browser bloquea el autoplay: no dejamos que corte el resto
+    if (played && typeof played.catch === 'function') played.catch(() => {})
+  }
+
+  function activate(item, duration = FADE) {
+    if (active === item) return
+    active = item
+
+    cards.forEach((card) => {
+      const isActive = card === item
+      if (isActive) playVideo(card.video)
+      else card.video.pause()
+      if (card.overlay) gsap.to(card.overlay, { autoAlpha: isActive ? 0 : DIM_OPACITY, duration })
+    })
+  }
+
+  function deactivate(duration = FADE) {
+    if (active === null) return
+    active = null
+    cards.forEach(({ video, overlay }) => {
+      video.pause()
+      if (overlay) gsap.to(overlay, { autoAlpha: DIM_OPACITY, duration })
+    })
+  }
+
+  mm.add('(min-width: 992px)', () => {
+    // La seccion esta debajo del fold: si activamos la primera card al cargar,
+    // su video compite con el critical path. Esperamos a que se acerque.
+    const firstCardVisible = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return
+        firstCardVisible.disconnect()
+        if (active === null) activate(cards[0], 0)
+      },
+      { rootMargin: '200px 0px' }
+    )
+    firstCardVisible.observe(cards[0].card)
+
+    const bound = cards.map((item) => {
+      const onEnter = () => activate(item)
+      const onLeave = () => deactivate()
+      item.card.addEventListener('mouseenter', onEnter)
+      item.card.addEventListener('mouseleave', onLeave)
+      return { item, onEnter, onLeave }
+    })
+
+    return () => {
+      firstCardVisible.disconnect()
+      bound.forEach(({ item, onEnter, onLeave }) => {
+        item.card.removeEventListener('mouseenter', onEnter)
+        item.card.removeEventListener('mouseleave', onLeave)
+      })
+      deactivate(0)
+    }
+  })
+
+  // Sin hover: reproduce la card mas visible (la slide activa del swiper, o la
+  // card que entra al viewport en tablet) y el tap fija la que elige el usuario.
+  mm.add('(max-width: 991px)', () => {
+    const ratios = new Map()
+    let pinned = null
+
+    function ratioOf(item) {
+      return ratios.get(item) || 0
+    }
+
+    function mostVisible() {
+      return cards.reduce((best, card) => (ratioOf(card) > ratioOf(best) ? card : best), cards[0])
+    }
+
+    function sync() {
+      // el tap manda mientras esa card siga a la vista
+      const target = pinned && ratioOf(pinned) >= VISIBLE_RATIO ? pinned : mostVisible()
+      if (target !== pinned) pinned = null
+      if (ratioOf(target) >= VISIBLE_RATIO) activate(target)
+      else deactivate()
+    }
+
+    // El swiper translada las slides dentro de un contenedor con overflow hidden,
+    // asi que el clipping del ancestro ya las saca del intersection rect.
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const item = cardsByElement.get(entry.target)
+          if (item) ratios.set(item, entry.intersectionRatio)
+        })
+        sync()
+      },
+      { threshold: Array.from({ length: 11 }, (_, i) => i / 10) }
+    )
+
+    cards.forEach((item) => observer.observe(item.card))
+
+    const bound = cards.map((item) => {
+      const onTap = () => {
+        // tap en una slide que apenas asoma: la maneja el swipe, no lo fijamos
+        if (ratioOf(item) < VISIBLE_RATIO) return
+        pinned = item
+        activate(item)
+      }
+      item.card.addEventListener('click', onTap)
+      return { item, onTap }
+    })
+
+    return () => {
+      observer.disconnect()
+      bound.forEach(({ item, onTap }) => item.card.removeEventListener('click', onTap))
+      deactivate(0)
+    }
+  })
+}
+</script>

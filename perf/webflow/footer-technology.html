@@ -1,0 +1,11 @@
+<!-- FOOTER DE TECHNOLOGY · Page settings > before </body>
+     chart.js baja del <head> a aca: bloqueaba el render con 71 KB.
+     Tiene que quedar ANTES de tech.min.js, que lo usa.
+     Finsweet NO va aca: ya esta aplicado en el <head> de la pagina con
+     fs-scrolldisable, y desde ahi funciona (verificado en vivo). -->
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/wonderup-agency/Mendaera@3fea41f/tech.min.js"></script>
+
+<!-- Al cambiar tech.js hay que commitear, minificar y actualizar el
+     hash del pin de jsDelivr en la linea de arriba. -->

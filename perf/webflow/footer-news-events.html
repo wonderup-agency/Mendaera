@@ -1,0 +1,234 @@
+<!-- FOOTER DE NEWS & EVENTS · Page settings > before </body>
+     Unica pagina que usa Finsweet List de verdad: 18 fs-list-element,
+     load-more, filtros y paginacion. Solo el modulo list. -->
+
+<script async type="module" src="https://cdn.jsdelivr.net/npm/@finsweet/attributes@2/attributes.js" fs-list></script>
+
+<script>
+// ------------------------
+// Event Date Range — Formats start/end dates into readable range
+// ------------------------
+;(function () {
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+  function pad2(n) { return n < 10 ? '0' + n : String(n) }
+
+  function formatEventRange(startStr, endStr) {
+    var start = new Date(startStr)
+    if (isNaN(start)) return ''
+
+    var sMonth = MONTHS[start.getMonth()]
+    var sDay   = pad2(start.getDate())
+    var sYear  = start.getFullYear()
+
+    if (!endStr) {
+      return sMonth + ' ' + sDay + ', ' + sYear
+    }
+
+    var end = new Date(endStr)
+    if (isNaN(end)) {
+      return sMonth + ' ' + sDay + ', ' + sYear
+    }
+
+    var eMonth = MONTHS[end.getMonth()]
+    var eDay   = pad2(end.getDate())
+    var eYear  = end.getFullYear()
+
+    // Same day
+    if (sYear === eYear && start.getMonth() === end.getMonth() && sDay === eDay) {
+      return sMonth + ' ' + sDay + ', ' + sYear
+    }
+
+    // Same month & year
+    if (sYear === eYear && start.getMonth() === end.getMonth()) {
+      return sMonth + ' ' + sDay + '–' + eDay + ', ' + sYear
+    }
+
+    // Same year, different months
+    if (sYear === eYear) {
+      return sMonth + ' ' + sDay + ' – ' + eMonth + ' ' + eDay + ', ' + sYear
+    }
+
+    // Different years
+    return sMonth + ' ' + sDay + ', ' + sYear + ' – ' + eMonth + ' ' + eDay + ', ' + eYear
+  }
+
+  document.querySelectorAll('[data-event-component]').forEach(function (component, index) {
+    var startEl = component.querySelector('[data-event-start]')
+    var rangeEl = component.querySelector('[data-event-range]')
+
+    if (!startEl || !rangeEl) return
+
+    var startVal = startEl.getAttribute('data-event-start')
+    if (!startVal) return
+
+    var endEl  = component.querySelector('[data-event-end]')
+    var endVal = endEl ? endEl.getAttribute('data-event-end') : null
+
+    rangeEl.textContent = formatEventRange(startVal, endVal)
+  })
+})()
+
+// ------------------------
+// Insert Upcoming Events Placeholder
+// If [data-component="upcoming-events"] has only 1 event item, inject an image placeholder
+// in the slot where a second event would go.
+// ------------------------
+;(function () {
+  var PLACEHOLDER_IMAGE = 'https://cdn.prod.website-files.com/682e3019357b268eba902b84/69f20be1cf6976f3391b1cc1_opt06-default-events-image-968x656-1.jpg'
+
+  var component = document.querySelector('[data-component="upcoming-events"]')
+  if (!component) { console.log('[upcoming-placeholder] [data-component="upcoming-events"] not found'); return }
+
+  var list = component.querySelector('.events_list.is-upcoming') || component.querySelector('.events_list')
+  if (!list) { console.log('[upcoming-placeholder] .events_list not found inside component'); return }
+
+  var items = list.querySelectorAll('.events_item')
+  console.log('[upcoming-placeholder] Found', items.length, 'items in upcoming events list')
+  if (items.length !== 1) return
+
+  var wrapper = document.createElement('div')
+  wrapper.setAttribute('role', 'listitem')
+  wrapper.className = 'events_item events_placeholder-item w-dyn-item'
+
+  var img = document.createElement('img')
+  img.src = PLACEHOLDER_IMAGE
+  img.loading = 'lazy'
+  img.alt = ''
+  img.className = 'events_placeholder-image'
+
+  wrapper.appendChild(img)
+  items[0].after(wrapper)
+  console.log('[upcoming-placeholder] Image placeholder injected')
+})()
+
+// ------------------------
+// Finsweet pagination — normalize + single page
+// Reemplaza al IIFE viejo que corría con setTimeout(1000).
+//
+// Hace dos cosas, cada vez que Finsweet re-renderiza (render inicial, cambio de
+// página, filtro, búsqueda, resize que cambia el valor responsive de siblings):
+//
+// 1. Saca los botones que sobran. Un paginado válido siempre es estrictamente
+//    ascendente (1 2 3 … 9), así que cualquier botón cuyo número no sea mayor al
+//    anterior es basura de un render previo que Finsweet no limpió: es el
+//    "… 9 8 9" que se veía en mobile.
+// 2. Esconde el wrapper si quedó una sola página, y lo vuelve a mostrar si un
+//    filtro devuelve varias (el script viejo lo escondía para siempre).
+// ------------------------
+;(function () {
+  var PAGE_BUTTON = '[fs-list-element="page-button"]'
+
+  function getPageNumber(button) {
+    var match = /_page=(\d+)/.exec(button.getAttribute('href') || '')
+    if (match) return parseInt(match[1], 10)
+    var text = parseInt((button.textContent || '').trim(), 10)
+    return isNaN(text) ? null : text
+  }
+
+  function normalize(wrapper) {
+    var buttons = wrapper.querySelectorAll(PAGE_BUTTON)
+    var kept = 0
+    var lastPage = 0
+
+    buttons.forEach(function (button) {
+      var page = getPageNumber(button)
+      // fuera de orden o repetido => resto de un render anterior
+      if (page === null || page <= lastPage) {
+        button.remove()
+        return
+      }
+      lastPage = page
+      kept++
+    })
+
+    // una sola página => no hace falta el paginado
+    wrapper.style.display = kept <= 1 ? 'none' : ''
+  }
+
+  function watch(wrapper) {
+    if (wrapper.dataset.paginationWatched) return
+    wrapper.dataset.paginationWatched = 'true'
+
+    var scheduled = false
+    var observer = new MutationObserver(function () {
+      if (scheduled) return
+      scheduled = true
+      requestAnimationFrame(function () {
+        scheduled = false
+        normalize(wrapper)
+      })
+    })
+
+    // solo childList: no observamos atributos, así el display que escribimos
+    // acá no vuelve a disparar el observer
+    observer.observe(wrapper, { childList: true, subtree: true })
+    normalize(wrapper)
+  }
+
+  function scan() {
+    document.querySelectorAll('.pagination_wrapper').forEach(watch)
+  }
+
+  scan()
+  // por si algún wrapper entra al DOM más tarde
+  setTimeout(scan, 1000)
+  setTimeout(scan, 3000)
+})()
+
+// OJO: este ultimo bloque viene de news-events/news.js. Si ya lo tenes
+// en otro embed de la pagina, borralo de aca para no duplicar listeners.
+// News & Events - Hide highlight items when filtering
+;(function () {
+  const highlightList = document.querySelector(
+    ".news_list-wrapper:not(:has([fs-list-element='list']))"
+  );
+  if (!highlightList) return;
+
+  // Setup transition styles
+  highlightList.style.transition =
+    "opacity 0.4s ease, max-height 0.5s ease, margin 0.5s ease, padding 0.5s ease";
+  highlightList.style.overflow = "hidden";
+  highlightList.style.opacity = "1";
+  var originalHeight = highlightList.scrollHeight;
+  highlightList.style.maxHeight = originalHeight + "px";
+
+  const radios = document.querySelectorAll(
+    '[fs-list-field="category"][type="radio"]'
+  );
+  const searchInput = document.querySelector(".news_search-input");
+
+  function update() {
+    const selectedRadio = document.querySelector(
+      '[fs-list-field="category"][type="radio"]:checked'
+    );
+    const hasFilter = selectedRadio && selectedRadio.value !== "";
+    const hasSearch = searchInput && searchInput.value.trim() !== "";
+
+    if (hasFilter || hasSearch) {
+      highlightList.style.opacity = "0";
+      highlightList.style.maxHeight = "0px";
+      highlightList.style.marginTop = "0px";
+      highlightList.style.marginBottom = "0px";
+      highlightList.style.paddingTop = "0px";
+      highlightList.style.paddingBottom = "0px";
+    } else {
+      highlightList.style.opacity = "1";
+      highlightList.style.maxHeight = originalHeight + "px";
+      highlightList.style.marginTop = "";
+      highlightList.style.marginBottom = "";
+      highlightList.style.paddingTop = "";
+      highlightList.style.paddingBottom = "";
+    }
+  }
+
+  radios.forEach(function (radio) {
+    radio.addEventListener("change", update);
+  });
+
+  if (searchInput) {
+    searchInput.addEventListener("input", update);
+  }
+})();
+</script>

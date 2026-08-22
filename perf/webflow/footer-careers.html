@@ -1,0 +1,367 @@
+<!-- FOOTER DE CAREERS · Page settings > before </body>
+     Cambios respecto de lo que habia:
+      - El popup de testimonials ya no esta capado en 960 px: escala al
+        mayor tamano que entre en los dos ejes, con el aspect ratio real
+        del video (los 4 testimonials no comparten proporcion).
+      - Fuera los 7 console.log de debug.
+     El resto queda igual. -->
+
+<script src="https://cdn.jsdelivr.net/npm/swiper@12/swiper-bundle.min.js"></script>
+
+<script>
+  // ------------------------
+  // Photo Gallery — Scroll Parallax (pin + delayed animation)
+  // ------------------------
+  gsap.registerPlugin(ScrollTrigger);
+
+  (function () {
+    const section = document.querySelector('.section_photo-gallery');
+    if (!section || window.innerWidth < 992) return;
+
+    // Corners → vertical, sides → horizontal. Values in rem.
+    const d = '1rem';
+
+    const images = [
+      { selector: '.photo-gallery_image-wrapper.is-1', x: 0, y: '-' + d }, // top-left → up
+      { selector: '.photo-gallery_image-wrapper.is-2', x: 0, y: '-' + d }, // top-right → up
+      { selector: '.photo-gallery_image-wrapper.is-3', x: '-' + d, y: 0 }, // mid-left → left
+      { selector: '.photo-gallery_image-wrapper.is-4', x: d, y: 0 }, // mid-right → right
+      { selector: '.photo-gallery_image-wrapper.is-5', x: 0, y: d }, // bottom-left → down
+      { selector: '.photo-gallery_image-wrapper.is-6', x: 0, y: d }, // bottom-right → down
+    ];
+
+    // Timeline: pause → then animate
+    const tl = gsap.timeline({
+      scrollTrigger: {
+        trigger: section,
+        start: 'top top',
+        end: '+=110%', // total pinned scroll distance
+        pin: true,
+        scrub: true,
+      },
+    });
+
+    // First 40% of scroll: nothing happens (pause)
+    tl.to({}, { duration: 0.4 });
+
+    // Remaining 60%: images move outward
+    images.forEach(({ selector, x, y }) => {
+      const el = section.querySelector(selector);
+      if (!el) return;
+
+      tl.to(
+        el,
+        {
+          x: x,
+          y: y,
+          duration: 0.6,
+          ease: 'none',
+        },
+        0.4,
+      ); // all start at the same point after the pause
+    });
+  })();
+
+  // ------------------------
+  // Testimonials Slider — Swiper
+  // ------------------------
+  (function () {
+    const section = document.querySelector('[data-component="testimonials-slider"]');
+    if (!section) return;
+
+    const sliderEl = section.querySelector('[data-testimonials-slider="slider"]');
+    const prevBtn = section.querySelector('[data-testimonials-slider="arrow-prev"]');
+    const nextBtn = section.querySelector('[data-testimonials-slider="arrow-next"]');
+    if (!sliderEl) return;
+
+    const swiper = new Swiper(sliderEl, {
+      slidesPerView: 1,
+      spaceBetween: 8,
+      speed: 600,
+      grabCursor: true,
+      autoplay: {
+        delay: 6000,
+      },
+      breakpoints: {
+        767: {
+          slidesPerView: 1.25,
+          spaceBetween: 8,
+        },
+        992: {
+          slidesPerView: 2.25,
+          spaceBetween: 24,
+        },
+      },
+    });
+
+    if (prevBtn) prevBtn.addEventListener('click', () => swiper.slidePrev());
+    if (nextBtn) nextBtn.addEventListener('click', () => swiper.slideNext());
+  })();
+  // ------------------------
+  // Video
+  // ------------------------
+  document.querySelectorAll('[data-component="home-video"]').forEach((videoComponent) => {
+    const wrapper = videoComponent.querySelector('[data-home-video="wrapper"]');
+    const video = videoComponent.querySelector('[data-home-video="video"]');
+    const playButton = videoComponent.querySelector('[data-home-video="play-button"]');
+
+    const autoplayOnly = videoComponent.dataset.autoplayOnly === 'true';
+    const showControls = videoComponent.dataset.controls === 'true';
+    const playOnView = videoComponent.dataset.playOnView === 'true';
+    const noAnimation = videoComponent.dataset.noAnimation === 'true';
+
+    video.loop = true;
+    video.muted = true;
+
+    if (playOnView) {
+      playButton.style.display = 'none';
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              video.play();
+            } else {
+              video.pause();
+            }
+          });
+        },
+        { threshold: 0.5 },
+      );
+      observer.observe(video);
+    } else if (showControls) {
+      playButton.style.display = 'flex';
+    } else {
+      playButton.style.display = 'none';
+      video.play();
+    }
+
+    function handlePlay() {
+      if (showControls) {
+        video.muted = false;
+        video.controls = true;
+      }
+      video.play();
+      playButton.style.display = 'none';
+    }
+
+    if (!autoplayOnly) {
+      const overlayWrapper = videoComponent.querySelector('.vid_overlay-wrapper');
+      if (overlayWrapper) overlayWrapper.style.pointerEvents = 'auto';
+
+      wrapper.addEventListener('click', (e) => {
+        if (e.target.closest('[data-home-video="play-button"]')) return;
+        if (video.paused) {
+          handlePlay();
+        } else {
+          video.pause();
+          playButton.style.display = 'flex';
+        }
+      });
+
+      playButton.addEventListener('click', () => {
+        handlePlay();
+      });
+    }
+
+    if (!noAnimation) {
+      const mm = gsap.matchMedia();
+      mm.add('(min-width: 992px)', () => {
+        const tl = gsap.timeline({
+          scrollTrigger: {
+            trigger: videoComponent,
+            start: 'top top',
+            end: '+=100%',
+            scrub: true,
+            pin: true,
+          },
+        });
+        tl.to(wrapper, {
+          maxWidth: '87rem',
+          height: '95%',
+          borderRadius: '0.75rem',
+        });
+      });
+    }
+  });
+
+  // ------------------------
+  // Testimonials Video — Popup Player (GSAP)
+  // ------------------------
+  (function () {
+    const section = document.querySelector('[data-component="testimonials-slider"]');
+    if (!section) return;
+
+    // ---- Build modal overlay ----
+    const overlay = document.createElement('div');
+    overlay.className = 'testimonial-video-overlay';
+    Object.assign(overlay.style, {
+      position: 'fixed',
+      inset: '0',
+      zIndex: '9999',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: 'rgba(0, 0, 0, 0.85)',
+      opacity: '0',
+      visibility: 'hidden',
+      cursor: 'pointer',
+    });
+
+    const videoEl = document.createElement('video');
+    videoEl.className = 'testimonial-video-popup';
+    videoEl.controls = true;
+    videoEl.playsInline = true;
+    Object.assign(videoEl.style, {
+      borderRadius: '8px',
+      outline: 'none',
+      transform: 'scale(0.85)',
+      opacity: '0',
+    });
+
+    // The popup was capped at max-width 960px, so on a 2560px screen it opened
+    // at barely a third of the available width. fitVideo sizes it to the largest
+    // box that fits both axes while keeping the video's own aspect ratio, which
+    // has to be read off the element: the testimonials are not all 16:9 (their
+    // posters range from 1.32 to 1.78).
+    const VIEWPORT_W = 0.92;
+    const VIEWPORT_H = 0.86;
+
+    function fitVideo() {
+      const ratio =
+        videoEl.videoWidth && videoEl.videoHeight
+          ? videoEl.videoWidth / videoEl.videoHeight
+          : 16 / 9;
+
+      // Never scale past the source's own pixel width: filling a 5K screen with
+      // a 720p file only makes it soft.
+      const width = Math.min(
+        window.innerWidth * VIEWPORT_W,
+        window.innerHeight * VIEWPORT_H * ratio,
+        videoEl.videoWidth || Infinity,
+      );
+
+      videoEl.style.width = Math.round(width) + 'px';
+      videoEl.style.height = Math.round(width / ratio) + 'px';
+    }
+
+    // Sized with the 16:9 fallback on open, then corrected once the real
+    // dimensions arrive, so the animation never starts from the 300x150 default.
+    videoEl.addEventListener('loadedmetadata', fitVideo);
+    window.addEventListener(
+      'resize',
+      () => {
+        if (overlay.style.visibility === 'visible') fitVideo();
+      },
+      { passive: true },
+    );
+
+    overlay.appendChild(videoEl);
+    document.body.appendChild(overlay);
+
+    // ---- Open modal ----
+    function openVideo(src) {
+      videoEl.src = src;
+      overlay.style.visibility = 'visible';
+      fitVideo();
+
+      gsap
+        .timeline()
+        .to(overlay, { opacity: 1, duration: 0.3, ease: 'power2.out' })
+        .to(videoEl, { scale: 1, opacity: 1, duration: 0.4, ease: 'back.out(1.4)' }, 0.1)
+        .add(() => videoEl.play());
+    }
+
+    // ---- Close modal ----
+    function closeVideo() {
+      videoEl.pause();
+
+      gsap
+        .timeline()
+        .to(videoEl, { scale: 0.85, opacity: 0, duration: 0.25, ease: 'power2.in' })
+        .to(overlay, { opacity: 0, duration: 0.2, ease: 'power2.in' }, 0.1)
+        .set(overlay, { visibility: 'hidden' })
+        .add(() => {
+          videoEl.removeAttribute('src');
+          videoEl.load();
+        });
+    }
+
+    // Close on overlay click (not on video itself)
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeVideo();
+    });
+
+    // Close on Escape
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeVideo();
+    });
+
+    // ---- Bind cards ----
+    const cards = section.querySelectorAll('.testimonial-card');
+    cards.forEach((card) => {
+      const source = card.querySelector('.testimonial_video-source');
+      if (!source) return;
+
+      const videoSrc = source.getAttribute('src');
+      if (!videoSrc) return;
+
+      card.style.cursor = 'pointer';
+      card.addEventListener('click', () => openVideo(videoSrc));
+    });
+  })();
+
+  // ------------------------
+  // Gallery
+  // ------------------------
+  const galleryComponent = document.querySelector("[data-component='gallery']");
+  if (galleryComponent) {
+    window.addEventListener('load', () => {
+      const centerImage = galleryComponent.querySelector("[data-gallery='center-image']");
+      const finalWidth = window.innerWidth > 767 ? '21rem' : '13rem';
+      gsap.fromTo(
+        centerImage,
+        {
+          width: 0,
+        },
+        {
+          scrollTrigger: {
+            trigger: galleryComponent,
+            start: 'top bottom',
+          },
+          width: finalWidth,
+          ease: 'power2.inOut',
+          duration: 1,
+        },
+      );
+    });
+  }
+  
+// ------------------------
+// Technologies video/tabs
+// ------------------------
+const techVideoDesktop = document.querySelector("[data-tech-video='desktop']")
+const techVideoMobile = document.querySelector("[data-tech-video='mobile']")
+    // GSAP MatchMedia
+const mm = gsap.matchMedia()
+if (techVideoDesktop) {
+  mm.add('(min-width: 480px)', () => {
+    ScrollTrigger.create({
+      trigger: techVideoDesktop,
+      start: 'top bottom',
+      onEnter: () => {
+        techVideoDesktop.play()
+      },
+    })
+  })
+}
+if (techVideoMobile) {
+  mm.add('(max-width: 479px)', () => {
+    ScrollTrigger.create({
+      trigger: techVideoMobile,
+      start: 'top bottom',
+      onEnter: () => {
+        techVideoMobile.play()
+      },
+    })
+  })
+}</script>

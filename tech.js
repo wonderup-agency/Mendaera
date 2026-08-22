@@ -1128,20 +1128,59 @@ mm.add('(max-width: 991px)', () => {
   // ---- Auto-advance: los items de la card abierta se reproducen en loop ----
   // Equivalente mobile de startAutoAdvance() de desktop: cuando termina el video
   // del item actual pasa al siguiente, y despues del ultimo vuelve al primero.
+  //
+  // Ojo con el snippet de perf del <head>: le pone preload="none" a todo <video>
+  // que entra al DOM, incluidos estos que se crean por JS. Por eso la cadena
+  // corre solo con la card en pantalla — si no, el primer video arranca su
+  // descarga (varios MB) durante el load de la pagina y lo tira 4 s abajo.
   const ITEM_FALLBACK_DURATION = 5 // segundos para items sin video
   const METADATA_TIMEOUT = 8 // segundos: si no llega duration, se avanza igual
   let _cardAuto = null
 
+  // Cards en pantalla. La cadena se pausa cuando la card sale del viewport:
+  // sin esto el loop sigue bajando MB indefinidamente aunque no se vea.
+  const visibleCards = new Set()
+  const cardObserver = typeof IntersectionObserver !== 'undefined'
+    ? new IntersectionObserver((entries) => {
+        entries.forEach((e) => {
+          if (e.isIntersecting) visibleCards.add(e.target)
+          else visibleCards.delete(e.target)
+          if (openCard !== e.target) return
+          if (e.isIntersecting) resumeCardAutoAdvance()
+          else pauseCardAutoAdvance()
+        })
+      }, { threshold: 0.01 })
+    : null
+  if (cardObserver) allCards.forEach((c) => cardObserver.observe(c))
+
+  // Sin IntersectionObserver se cae al comportamiento de siempre (reproducir)
+  function isCardVisible(card) {
+    return !cardObserver || visibleCards.has(card)
+  }
+
   function stopCardAutoAdvance() {
     if (!_cardAuto) return
-    const { video, onEnded, onError, onMeta, timer } = _cardAuto
+    const { video, listeners, timer } = _cardAuto
     if (timer) clearTimeout(timer)
-    if (video) {
-      video.removeEventListener('ended', onEnded)
-      video.removeEventListener('error', onError)
-      video.removeEventListener('loadedmetadata', onMeta)
-    }
+    if (video && listeners) listeners.forEach(([ev, fn]) => video.removeEventListener(ev, fn))
     _cardAuto = null
+  }
+
+  // Card fuera de pantalla: se corta el video y el timer, pero la cadena
+  // se conserva para poder retomarla en el mismo item al volver
+  function pauseCardAutoAdvance() {
+    if (!_cardAuto) return
+    if (_cardAuto.timer) { clearTimeout(_cardAuto.timer); _cardAuto.timer = null }
+    if (_cardAuto.video) _cardAuto.video.pause()
+  }
+
+  function resumeCardAutoAdvance() {
+    if (!_cardAuto) return
+    if (_cardAuto.video) {
+      _cardAuto.video.preload = 'auto'
+      _cardAuto.video.play().catch(() => {})
+    }
+    if (_cardAuto.arm) _cardAuto.arm()
   }
 
   function startCardAutoAdvance(card, cardIndex, index) {
@@ -1163,14 +1202,31 @@ mm.add('(max-width: 991px)', () => {
       setCardItem(card, cardIndex, nextIndex)
     }
 
-    // Se crea el <video> del proximo item para que pida metadata desde ahora
-    // y el switch no arranque con un frame vacio
-    getOrCreateVideo(card, cardIndex, nextIndex)
+    // El proximo video se precarga recien cuando el actual ya se puede
+    // reproducir de corrido, para no competirle ancho de banda en mobile
+    function preloadNext() {
+      if (!isCardVisible(card)) return
+      const nv = getOrCreateVideo(card, cardIndex, nextIndex)
+      if (!nv || nv.preload === 'auto') return
+      // El observer del snippet de perf corre en un microtask al insertarse el
+      // elemento y pone preload="none"; este rAF corre despues, asi que gana
+      requestAnimationFrame(() => {
+        if (!nv.isConnected) return
+        nv.preload = 'auto'
+        try { nv.load() } catch (e) {}
+      })
+    }
 
     const video = cardVideos.get(`${cardIndex}-${index}`)
     if (!video) {
       // Item sin video (fallback a imagen): timer fijo, igual que desktop
-      _cardAuto = { card, index, video: null, timer: setTimeout(advance, ITEM_FALLBACK_DURATION * 1000) }
+      const state = { card, index, video: null, timer: null }
+      state.arm = () => {
+        if (state.timer) clearTimeout(state.timer)
+        state.timer = setTimeout(advance, ITEM_FALLBACK_DURATION * 1000)
+      }
+      _cardAuto = state
+      if (isCardVisible(card)) state.arm()
       return
     }
 
@@ -1179,27 +1235,26 @@ mm.add('(max-width: 991px)', () => {
     const state = { card, index, video, timer: null }
     // Red de seguridad por si 'ended' no llega (stall, codec, tab en background):
     // se arma recien cuando se conoce la duracion real para no cortar el video.
-    function armSafetyTimer() {
+    state.arm = function armSafetyTimer() {
       if (state.timer) clearTimeout(state.timer)
       const d = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : null
-      state.timer = setTimeout(advance, ((d || ITEM_FALLBACK_DURATION) - video.currentTime + 2) * 1000)
+      // Sin metadata todavia: se reintenta en METADATA_TIMEOUT
+      const secs = d ? d - video.currentTime + 2 : METADATA_TIMEOUT
+      state.timer = setTimeout(advance, secs * 1000)
     }
 
-    state.onEnded = advance
-    state.onError = advance
-    state.onMeta = () => { if (_cardAuto === state) armSafetyTimer() }
-
-    video.addEventListener('ended', state.onEnded)
-    video.addEventListener('error', state.onError)
-    video.addEventListener('loadedmetadata', state.onMeta)
+    const onMeta = () => { if (_cardAuto === state) state.arm() }
+    state.listeners = [
+      ['ended', advance],
+      ['error', advance],
+      ['loadedmetadata', onMeta],
+      ['canplaythrough', preloadNext],
+    ]
+    state.listeners.forEach(([ev, fn]) => video.addEventListener(ev, fn))
 
     _cardAuto = state
-    if (Number.isFinite(video.duration) && video.duration > 0) {
-      armSafetyTimer()
-    } else {
-      // Todavia sin metadata: se avanza si tampoco llega en METADATA_TIMEOUT
-      state.timer = setTimeout(advance, METADATA_TIMEOUT * 1000)
-    }
+    // Fuera de pantalla no se arma nada: lo hace el observer al entrar
+    if (isCardVisible(card)) state.arm()
   }
 
   // Activa un item: texto activo + visual + reinicia la cadena desde ese item
@@ -1364,7 +1419,11 @@ mm.add('(max-width: 991px)', () => {
       })
       video.style.display = 'block'
       video.currentTime = 0
-      video.play().catch(() => {})
+      // Solo se reproduce (= solo se descarga) con la card en pantalla
+      if (isCardVisible(card)) {
+        video.preload = 'auto'
+        video.play().catch(() => {})
+      }
     } else {
       // No video — fall back to image crossfade
       images.forEach((img) => {
@@ -1415,6 +1474,8 @@ mm.add('(max-width: 991px)', () => {
   return () => {
     _ac.abort()
     stopCardAutoAdvance()
+    if (cardObserver) cardObserver.disconnect()
+    visibleCards.clear()
     openCard = null
     // Destroy all dynamic videos
     for (const [, video] of cardVideos) {

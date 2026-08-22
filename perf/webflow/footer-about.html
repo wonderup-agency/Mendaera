@@ -1,0 +1,248 @@
+<!-- FOOTER DE ABOUT · Page settings > before </body>
+     About no usa ningun atributo fs-: aca NO va el tag de Finsweet. -->
+
+<script>
+// ------------------------------------------------------------
+// About page — custom code (Webflow > Page settings > before </body>)
+// Version revisada para resize (los dos <script> del embed unificados).
+// No incluye about.js (sort de logos de partners), que va aparte.
+// ------------------------------------------------------------
+
+// GSAP plugins
+gsap.registerPlugin(ScrollTrigger)
+// GSAP MatchMedia
+const mm = gsap.matchMedia()
+
+window.addEventListener('load', () => {
+  ScrollTrigger.refresh()
+  // Fallback por si el video/imágenes tardan más
+  setTimeout(() => ScrollTrigger.refresh(), 1500)
+})
+
+// ------------------------
+// Number Counter + Team list
+// ------------------------
+// Data attributes:
+// data-component="counter" → wrapper that enables the script
+// data-counter="value"     → target number (e.g., 5000)
+// data-counter-duration    → duration in seconds (optional, default: 2)
+// data-counter-suffix      → suffix like "+" or "%" (optional)
+// data-counter-prefix      → prefix like "$" (optional)
+document.addEventListener('DOMContentLoaded', () => {
+  const component = document.querySelector('[data-component="counter"]')
+
+  if (component) {
+    const triggerEl = component.querySelector('.our-story_stats') || component
+    const counters = component.querySelectorAll('[data-counter]')
+
+    // Set initial text with prefix/suffix and hide
+    counters.forEach((el) => {
+      const suffix = el.getAttribute('data-counter-suffix') || ''
+      const prefix = el.getAttribute('data-counter-prefix') || ''
+      const target = parseFloat(el.getAttribute('data-counter')) || 0
+      const hasDecimals = target % 1 !== 0
+      el.textContent = `${prefix}${hasDecimals ? '0.0' : '0'}${suffix}`
+    })
+    gsap.set(counters, { opacity: 0, y: 12 })
+
+    counters.forEach((el, index) => {
+      const target = parseFloat(el.getAttribute('data-counter')) || 0
+      const duration = parseFloat(el.getAttribute('data-counter-duration')) || 2
+      const suffix = el.getAttribute('data-counter-suffix') || ''
+      const prefix = el.getAttribute('data-counter-prefix') || ''
+      const hasDecimals = target % 1 !== 0
+      const staggerDelay = index * 0.15
+
+      // Fade in
+      gsap.to(el, {
+        opacity: 1,
+        y: 0,
+        duration: 0.6,
+        delay: staggerDelay,
+        ease: 'power2.out',
+        scrollTrigger: {
+          trigger: triggerEl,
+          start: 'top 40%',
+          toggleActions: 'play none none none',
+        },
+      })
+
+      // Count up
+      const obj = { val: 0 }
+      gsap.to(obj, {
+        val: target,
+        duration: duration,
+        ease: 'power2.out',
+        delay: staggerDelay,
+        scrollTrigger: {
+          trigger: triggerEl,
+          start: 'top 50%',
+          toggleActions: 'play none none none',
+        },
+        onUpdate: () => {
+          const formatted = hasDecimals
+            ? obj.val.toFixed(1)
+            : Math.round(obj.val).toLocaleString('en-US')
+          el.textContent = `${prefix}${formatted}${suffix}`
+        },
+      })
+    })
+  }
+
+  // Team list — reveal fila por fila.
+  // Antes las filas se agrupaban por offsetTop una sola vez, así que al cambiar
+  // la cantidad de columnas en resize los grupos quedaban mal. ScrollTrigger.batch
+  // crea un trigger por card y agrupa los que entran casi al mismo tiempo
+  // (= los de una misma fila), así que se re-calcula solo en cada refresh.
+  const teamItems = document.querySelectorAll('.team_item')
+  if (teamItems.length) {
+    gsap.set(teamItems, { opacity: 0, scale: 0.8 })
+
+    ScrollTrigger.batch(teamItems, {
+      start: 'top center',
+      once: true,
+      interval: 0.12, // ventana de agrupado, en segundos
+      batchMax: 4, // máximo de columnas de la grilla
+      onEnter: (batch) =>
+        gsap.to(batch, {
+          opacity: 1,
+          scale: 1,
+          duration: 0.8,
+          stagger: 0.15,
+          ease: 'power2.out',
+          overwrite: true,
+        }),
+    })
+  }
+})
+
+// ------------------------
+// Video
+// ------------------------
+document.querySelectorAll('[data-component="home-video"]').forEach((videoComponent) => {
+  const wrapper = videoComponent.querySelector('[data-home-video="wrapper"]')
+  const video = videoComponent.querySelector('[data-home-video="video"]')
+  const playButton = videoComponent.querySelector('[data-home-video="play-button"]')
+
+  const autoplayOnly = videoComponent.dataset.autoplayOnly === 'true'
+  const showControls = videoComponent.dataset.controls === 'true'
+  const playOnView = videoComponent.dataset.playOnView === 'true'
+  const noAnimation = videoComponent.dataset.noAnimation === 'true'
+
+  video.loop = true
+  video.muted = true
+
+  if (playOnView) {
+    playButton.style.display = 'none'
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            video.play()
+          } else {
+            video.pause()
+          }
+        })
+      },
+      { threshold: 0.5 }
+    )
+    observer.observe(video)
+  } else if (showControls) {
+    playButton.style.display = 'flex'
+  } else {
+    playButton.style.display = 'none'
+    video.play()
+  }
+
+  function handlePlay() {
+    if (showControls) {
+      video.muted = false
+      video.controls = true
+    }
+    video.play()
+    playButton.style.display = 'none'
+  }
+
+  if (!autoplayOnly) {
+    const overlayWrapper = videoComponent.querySelector('.vid_overlay-wrapper')
+    if (overlayWrapper) overlayWrapper.style.pointerEvents = 'auto'
+
+    wrapper.addEventListener('click', (e) => {
+      if (e.target.closest('[data-home-video="play-button"]')) return
+      if (video.paused) {
+        handlePlay()
+      } else {
+        video.pause()
+        playButton.style.display = 'flex'
+      }
+    })
+
+    playButton.addEventListener('click', () => {
+      handlePlay()
+    })
+  }
+
+  if (!noAnimation) {
+    mm.add('(min-width: 992px)', () => {
+      const tl = gsap.timeline({
+        scrollTrigger: {
+          trigger: videoComponent,
+          start: 'top top',
+          end: '+=100%',
+          scrub: true,
+          pin: true,
+          // recalcula los valores del tween (rem / %) en cada refresh -> resize
+          invalidateOnRefresh: true,
+        },
+      })
+      tl.to(wrapper, {
+        maxWidth: '87rem',
+        height: '95%',
+        borderRadius: '0.75rem',
+      })
+    })
+  }
+})
+
+// ------------------------
+// References accordion
+// ------------------------
+document.querySelectorAll('.references_about').forEach((accordion) => {
+  const trigger = accordion.querySelector('.reference_link')
+  const wrapper = accordion.querySelector('.references_list-wrapper')
+  const iconPlus = accordion.querySelector('.reference_link-icon-inner:not(:last-child)')
+  const iconMinus = accordion.querySelector('.reference_link-icon-inner:last-child')
+  if (!trigger || !wrapper) return
+
+  let isOpen = false
+
+  // Estado inicial: cerrado
+  gsap.set(wrapper, { height: 0, overflow: 'hidden' })
+  gsap.set(iconMinus, { autoAlpha: 0 })
+  gsap.set(iconPlus, { autoAlpha: 1 })
+
+  trigger.style.cursor = 'pointer'
+
+  trigger.addEventListener('click', () => {
+    isOpen = !isOpen
+
+    // durante la animación siempre clipeado
+    gsap.set(wrapper, { overflow: 'hidden' })
+
+    gsap.to(wrapper, {
+      height: isOpen ? 'auto' : 0,
+      duration: 0.4,
+      ease: 'power2.inOut',
+      overwrite: true, // clicks rápidos no dejan dos tweens de height peleando
+      onComplete: () => {
+        // abierto queda en `auto`: la altura la maneja el contenido, así el
+        // acordeón acompaña el reflow del texto en cualquier resize
+        if (isOpen) gsap.set(wrapper, { height: 'auto', overflow: 'visible' })
+      },
+    })
+
+    gsap.to(iconPlus, { autoAlpha: isOpen ? 0 : 1, duration: 0.2 })
+    gsap.to(iconMinus, { autoAlpha: isOpen ? 1 : 0, duration: 0.2 })
+  })
+})
+</script>

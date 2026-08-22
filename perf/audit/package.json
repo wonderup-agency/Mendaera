@@ -1,0 +1,16 @@
+{
+  "name": "mendaera-perf-audit",
+  "private": true,
+  "type": "module",
+  "description": "Harness de medicion de la auditoria de performance",
+  "scripts": {
+    "lighthouse": "node lighthouse.mjs",
+    "waterfall": "node waterfall.mjs",
+    "filmstrip": "node filmstrip.mjs"
+  },
+  "dependencies": {
+    "chrome-launcher": "^1.1.2",
+    "lighthouse": "^13.4.1",
+    "puppeteer-core": "^24.0.0"
+  }
+}

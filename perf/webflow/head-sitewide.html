@@ -1,0 +1,206 @@
+<!-- HEAD SITE-WIDE · Project settings > Custom code > Head
+     Add at the top of the field, before whatever is already there. -->
+
+<!-- ============================================================
+     Mendaera — performance head snippet
+     Project settings > Custom code > Head code. Must come FIRST,
+     before any other head script.
+     ============================================================ -->
+
+<link rel="preconnect" href="https://d3e54v103j8qbb.cloudfront.net" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://unpkg.com" crossorigin>
+<link rel="preconnect" href="https://player.vimeo.com" crossorigin>
+
+<script>
+;(function () {
+  // The <video> elements carry their src in the markup, so the browser starts
+  // downloading during HTML parsing — long before the footer custom code runs.
+  // Measured on Home mobile (slow 4G / 4x CPU): 8.4 MB of video in flight
+  // before the first content pixel, starving fonts and posters of bandwidth
+  // until second 9.
+  //
+  // This block disarms every video as the parser inserts it (strips src and
+  // autoplay) and rearms it only when something actually wants to play it.
+  // play() is patched so the existing call sites keep working unchanged.
+
+  var SRC = 'mdSrc'
+  var AUTO = 'mdAutoplay'
+  var disarmed = []
+
+  function stash(el) {
+    if (el.dataset[SRC] != null) return
+    var src = el.getAttribute('src')
+    if (!src) return
+    el.dataset[SRC] = src
+    el.removeAttribute('src')
+  }
+
+  // Note: the poster CANNOT be optimized from here. It sits on the <video>
+  // opening tag, so the browser fires its fetch the moment it creates the
+  // element — before this observer can run. Measured: rewriting it downloads
+  // both versions (576 KB + 28 KB). The poster has to change in the markup.
+  // See README, section 2.2.
+
+  function disarm(video) {
+    if (video.dataset.mdDisarmed) return
+
+    // preload="none" is enough for a video nothing autoplays: the browser
+    // fetches nothing until something calls play().
+    video.preload = 'none'
+
+    // Only autoplay videos get their src stripped. Stripping it from the rest
+    // breaks any code that reads the URL off the element instead of calling
+    // play() — careers/custom.js does exactly that to build its lightbox:
+    //
+    //   const videoSrc = source.getAttribute('src')
+    //   if (!videoSrc) return            // <- bailed out, click never bound
+    //
+    // The bandwidth win comes from the autoplay videos anyway: those are the
+    // ones the browser downloads on its own, before any script runs.
+    if (!video.autoplay && !video.hasAttribute('autoplay')) return
+
+    video.dataset.mdDisarmed = '1'
+    video.dataset[AUTO] = '1'
+    video.autoplay = false
+    video.removeAttribute('autoplay')
+    stash(video)
+    for (var i = 0; i < video.children.length; i++) {
+      if (video.children[i].tagName === 'SOURCE') stash(video.children[i])
+    }
+    disarmed.push(video)
+  }
+
+  function rearm(video) {
+    if (!video.dataset.mdDisarmed || video.dataset.mdArmed) return
+    video.dataset.mdArmed = '1'
+    var restored = false
+    function put(el) {
+      if (el.dataset[SRC] != null) {
+        el.setAttribute('src', el.dataset[SRC])
+        delete el.dataset[SRC]
+        restored = true
+      }
+    }
+    put(video)
+    for (var i = 0; i < video.children.length; i++) {
+      if (video.children[i].tagName === 'SOURCE') put(video.children[i])
+    }
+    video.preload = 'auto'
+    // load() re-runs the resource selection algorithm. Without it the restored
+    // <source> is ignored, because the element already went through its
+    // initial selection.
+    if (restored) { try { video.load() } catch (e) {} }
+  }
+
+  window.mdVideo = { rearm: rearm }
+
+  // Any existing .play() rearms the video before playing, so the call sites in
+  // home.js / tech.js / about-page.js need no changes.
+  var proto = window.HTMLMediaElement && HTMLMediaElement.prototype
+  if (proto && proto.play) {
+    var origPlay = proto.play
+    proto.play = function () {
+      if (this.dataset && this.dataset.mdDisarmed) rearm(this)
+      return origPlay.apply(this, arguments)
+    }
+  }
+
+  // Safety net: native controls start playback without ever calling the JS
+  // play() method, so the patch above would never fire for them.
+  addEventListener('pointerdown', function (e) {
+    var video = e.target && e.target.closest && e.target.closest('video[data-md-disarmed]')
+    if (video) rearm(video)
+  }, true)
+
+  // The observer runs during parsing, before the video is inserted with its
+  // src ready to download.
+  if (window.MutationObserver) {
+    new MutationObserver(function (records) {
+      // While parsing, the observer gets one mutation per node the parser
+      // opens — thousands of them. Running querySelectorAll('video') on each
+      // is quadratic and measured ~1.5 s of LCP. During parsing it is enough
+      // to look at the node itself: the parser inserts every element on its
+      // own, so a <video> shows up as an addedNode in its own right. The deep
+      // search is only needed for subtrees injected later by JS (Swiper
+      // clones, CMS items).
+      var parsing = document.readyState === 'loading'
+      for (var r = 0; r < records.length; r++) {
+        var added = records[r].addedNodes
+        for (var n = 0; n < added.length; n++) {
+          var node = added[n]
+          if (node.nodeType !== 1) continue
+          if (node.tagName === 'VIDEO') disarm(node)
+          else if (node.tagName === 'SOURCE' && node.parentNode && node.parentNode.tagName === 'VIDEO') {
+            if (node.parentNode.dataset.mdDisarmed) stash(node)
+          } else if (!parsing && node.firstElementChild && node.querySelectorAll) {
+            var inner = node.querySelectorAll('video')
+            for (var v = 0; v < inner.length; v++) disarm(inner[v])
+          }
+        }
+      }
+    }).observe(document.documentElement, { childList: true, subtree: true })
+  }
+
+  // Home ships two hero <video> elements that share the same id AND the same
+  // source: the desktop hero and a smaller variant. Both are visible and both
+  // sit within the observer's rootMargin, so the same 6.7 MB file was being
+  // downloaded twice — 13.4 MB of a 15.3 MB page. Neither is display:none, so
+  // visibility alone cannot tell them apart.
+  //
+  // Keep one element per source: the one with the largest rendered area, which
+  // is the one the current breakpoint actually shows. This is a workaround for
+  // duplicated markup; the duplicate itself still belongs in the Designer fix.
+  function dedupeBySource(videos) {
+    var best = {}
+    videos.forEach(function (v) {
+      var src = v.dataset[SRC] || v.currentSrc || ''
+      var source = v.querySelector && v.querySelector('source')
+      if (!src && source) src = source.dataset[SRC] || source.getAttribute('src') || ''
+      if (!src) { best['@' + Math.random()] = v; return }
+      var rect = v.getBoundingClientRect()
+      var area = rect.width * rect.height
+      var current = best[src]
+      if (!current || area > current.area) best[src] = { el: v, area: area }
+    })
+    return Object.keys(best).map(function (k) { return best[k].el || best[k] })
+  }
+
+  // Videos that had autoplay get their behavior back, but only after load and
+  // only once they are near the viewport.
+  function activateAutoplay() {
+    var pending = disarmed.filter(function (v) { return v.dataset[AUTO] === '1' && !v.dataset.mdArmed })
+    pending = dedupeBySource(pending)
+    if (!pending.length) return
+    if (!window.IntersectionObserver) {
+      pending.forEach(function (v) { var p = v.play(); if (p && p.catch) p.catch(function () {}) })
+      return
+    }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return
+        io.unobserve(entry.target)
+        var p = entry.target.play()
+        if (p && p.catch) p.catch(function () {})
+      })
+    }, { rootMargin: '200px 0px' })
+    pending.forEach(function (v) { io.observe(v) })
+  }
+
+  addEventListener('load', function () {
+    if (window.requestIdleCallback) requestIdleCallback(activateAutoplay, { timeout: 1200 })
+    else setTimeout(activateAutoplay, 400)
+  })
+})()
+</script>
+
+<style>
+/* Goes with footer-lenis.js: the nav hides via a class, not an inline style.
+   Paste into Project settings > Custom code > Head, inside <style>. */
+.nav_component {
+  transition: transform 0.3s cubic-bezier(0.215, 0.61, 0.355, 1);
+}
+.nav_component.is-nav-hidden {
+  transform: translateY(-100%);
+}
+</style>
