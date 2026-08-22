@@ -1032,13 +1032,11 @@ return () => {
   style.id = 'md-tab-active-style'
   style.textContent = [
     '@media (max-width: 991px) {',
-    '  .product-overview_card-tablet .product_modal-tab-text-item .product-overview_tab-link-tablet,',
-    '  .product-overview_card-tablet .product_modal-tab-text-item .product-overview_tab-link-tablet * {',
-    '    transition: color 0.3s ease;',
+    '  .product-overview_card-tablet .product_modal-tab-text-item {',
+    '    transition: background-color 0.3s ease;',
     '  }',
-    '  .product-overview_card-tablet .product_modal-tab-text-item.is-active .product-overview_tab-link-tablet,',
-    '  .product-overview_card-tablet .product_modal-tab-text-item.is-active .product-overview_tab-link-tablet * {',
-    '    color: var(--base-color--teal, #26ca99);',
+    '  .product-overview_card-tablet .product_modal-tab-text-item.is-active {',
+    '    background-color: var(--base-color--teal, #26ca99);',
     '  }',
     '}',
   ].join('\n')
@@ -1321,6 +1319,12 @@ mm.add('(max-width: 991px)', () => {
     const icon = card.querySelector('.icon_plus')
     if (!dropdown) return
 
+    // Fast toggles: the open tweens have to die before these start. Both
+    // animate `height` on the same dropdown and GSAP defaults to
+    // overwrite: false, so whichever finishes last used to win — reopening
+    // mid-close left the card collapsed, showing the image and no video.
+    killCardTweens(card, dropdown)
+
     // Stop the chain before destroying the videos it listens to
     if (_cardAuto && _cardAuto.card === card) stopCardAutoAdvance()
 
@@ -1382,10 +1386,23 @@ mm.add('(max-width: 991px)', () => {
     })
   }
 
+  // Every target both open and close animate. Killing them on each toggle is
+  // what keeps a fast tap from leaving two tweens fighting over the same prop.
+  function killCardTweens(card, dropdown) {
+    gsap.killTweensOf(dropdown)
+    gsap.killTweensOf(dropdown.querySelectorAll('.product_modal-tab-text-item'))
+    const cta = dropdown.querySelector('.product_modal-cta')
+    if (cta) gsap.killTweensOf(cta)
+    const icon = card.querySelector('.icon_plus')
+    if (icon) gsap.killTweensOf(icon)
+  }
+
   function openCardDropdown(card, cardIndex, animate = true) {
     const dropdown = card.querySelector('.product-overview_card-tablet')
     const icon = card.querySelector('.icon_plus')
     if (!dropdown) return
+
+    killCardTweens(card, dropdown)
 
     // Set first item active, prepare stagger entrance
     const textItems = dropdown.querySelectorAll('.product_modal-tab-text-item')
@@ -1409,7 +1426,9 @@ mm.add('(max-width: 991px)', () => {
     // Measure height without flashing content
     gsap.set(dropdown, { height: 'auto', visibility: 'hidden' })
     const h = dropdown.scrollHeight
-    gsap.set(dropdown, { visibility: 'visible' })
+    // Set explicitly and not left to the close tween's onComplete: killing that
+    // tween mid-flight skips it, and the content spilled during the open
+    gsap.set(dropdown, { visibility: 'visible', overflow: 'hidden' })
     gsap.fromTo(dropdown,
       { height: 0 },
       {
