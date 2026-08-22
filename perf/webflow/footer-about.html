@@ -132,6 +132,48 @@ document.querySelectorAll('[data-component="home-video"]').forEach((videoCompone
   video.loop = true
   video.muted = true
 
+  // The poster is an attribute of the <video>, so the element paints it only
+  // while readyState < HAVE_CURRENT_DATA. On the first frame the element
+  // repaints and the poster is gone for good — and the Vision video is a
+  // 2160p / 42 MB rendition that stalls constantly on mobile. Traced on prod,
+  // slow 4G: first frame at 9,2 s, `waiting` at 9,7 s, playing again at
+  // 13,3 s, `waiting` at 13,8 s, playing at 20,2 s. That is the flicker:
+  // poster, gap, video, gap.
+  //
+  // Painting the same poster on the wrapper puts it *underneath* the video for
+  // good, so nothing can show through any more, and the video just fades in on
+  // top once it really has a frame. Same URL as the attribute, so it comes out
+  // of the HTTP cache — no second request. It does mean the image is decoded
+  // twice, which is one more reason to keep posters at `-p-1080.avif`
+  // (1080x608) instead of the full-size file: the Vision poster is 3840x2160
+  // in a box of 372x209.
+  //
+  // The attribute stays on the element on purpose: before metadata loads it is
+  // what gives the <video> its intrinsic ratio, and removing it collapses the
+  // box from 16:9 to the default 2:1 until the metadata lands.
+  let revealVideo = () => {}
+  const posterUrl = video.getAttribute('poster')
+
+  if (posterUrl && wrapper) {
+    wrapper.style.backgroundImage = `url("${posterUrl}")`
+    wrapper.style.backgroundSize = 'cover'
+    wrapper.style.backgroundPosition = 'center'
+    wrapper.style.backgroundRepeat = 'no-repeat'
+
+    // Plain opacity, not autoAlpha: `visibility: hidden` stops some browsers
+    // from decoding a video, and it has to keep decoding to reach frame one.
+    gsap.set(video, { opacity: 0 })
+
+    revealVideo = () =>
+      gsap.to(video, { opacity: 1, duration: 0.4, ease: 'power1.out', overwrite: true })
+
+    // requestVideoFrameCallback fires when a frame was actually presented.
+    // `loadeddata` is the spec-level equivalent where it is missing: the
+    // element can render the current position for the first time.
+    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(() => revealVideo())
+    else video.addEventListener('loadeddata', () => revealVideo(), { once: true })
+  }
+
   if (playOnView) {
     playButton.style.display = 'none'
     const observer = new IntersectionObserver(
@@ -159,6 +201,9 @@ document.querySelectorAll('[data-component="home-video"]').forEach((videoCompone
       video.muted = false
       video.controls = true
     }
+    // The native controls live inside the element, so they would be invisible
+    // too until the first frame. Once someone asks for playback, reveal it.
+    revealVideo()
     video.play()
     playButton.style.display = 'none'
   }

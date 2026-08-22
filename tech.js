@@ -1036,7 +1036,7 @@ return () => {
     '    transition: background-color 0.3s ease;',
     '  }',
     '  .product-overview_card-tablet .product_modal-tab-text-item.is-active {',
-    '    background-color: var(--base-color--teal, #26ca99);',
+    '    background-color: #2de7b0;',
     '  }',
     '}',
   ].join('\n')
@@ -1145,6 +1145,9 @@ mm.add('(max-width: 991px)', () => {
     const video = document.createElement('video')
     video.setAttribute('playsinline', '')
     video.muted = true
+    // iOS Safari looks at the attribute, not just the property, before it lets
+    // a dynamically created video play inline without a gesture
+    video.setAttribute('muted', '')
     video.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;display:none;z-index:2;'
     const source = document.createElement('source')
     source.src = src
@@ -1202,6 +1205,22 @@ mm.add('(max-width: 991px)', () => {
   // With no IntersectionObserver, fall back to the old behavior (just play)
   function isCardVisible(card) {
     return !cardObserver || visibleCards.has(card)
+  }
+
+  // Tapping a card used to leave you looking at the wrong place: the card that
+  // was open collapses, everything below it jumps up (measured 262-277 px on a
+  // 390x844 viewport) and the visual area of the card you just opened lands
+  // above the fold. Playback is gated on visibility, so that also meant the
+  // chain never started and the card sat there dead. Desktop already scrolls
+  // to the section on click; this is the mobile counterpart.
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const CARD_SCROLL_OFFSET = 16 // px of air above the card header
+
+  function scrollCardIntoView(card) {
+    const top = Math.max(0, card.getBoundingClientRect().top + window.scrollY - CARD_SCROLL_OFFSET)
+    const lenis = window.lenis || window.__lenis || document.documentElement.lenis
+    if (lenis && !prefersReducedMotion) lenis.scrollTo(top, { duration: 0.8 })
+    else window.scrollTo({ top, behavior: prefersReducedMotion ? 'auto' : 'smooth' })
   }
 
   function stopCardAutoAdvance() {
@@ -1268,7 +1287,9 @@ mm.add('(max-width: 991px)', () => {
       // Item with no video (image fallback): fixed timer, same as desktop
       const state = { card, index, video: null, timer: null }
       state.arm = () => {
-        if (state.timer) clearTimeout(state.timer)
+        if (state.timer) { clearTimeout(state.timer); state.timer = null }
+        // Off screen the observer re-arms this on the way back in
+        if (!isCardVisible(card)) return
         state.timer = setTimeout(advance, ITEM_FALLBACK_DURATION * 1000)
       }
       _cardAuto = state
@@ -1282,7 +1303,12 @@ mm.add('(max-width: 991px)', () => {
     // Safety net in case 'ended' never fires (stall, codec, backgrounded tab):
     // armed only once the real duration is known, so it never cuts one short.
     state.arm = function armSafetyTimer() {
-      if (state.timer) clearTimeout(state.timer)
+      if (state.timer) { clearTimeout(state.timer); state.timer = null }
+      // Off screen this stays disarmed: 'loadedmetadata' lands while the card
+      // is away (the video keeps buffering) and used to re-arm the timer, so
+      // the chain walked to the next item unseen, pulling one file after
+      // another. The observer arms it again when the card comes back.
+      if (!isCardVisible(card)) return
       const d = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : null
       // No metadata yet: retry after METADATA_TIMEOUT
       const secs = d ? d - video.currentTime + 2 : METADATA_TIMEOUT
@@ -1314,7 +1340,11 @@ mm.add('(max-width: 991px)', () => {
     startCardAutoAdvance(card, cardIndex, index)
   }
 
-  function closeCard(card) {
+  // `animate: false` collapses in place, no tweens. Used when another card is
+  // being opened: the layout has to settle in this same frame so the scroll
+  // target below is the final one, otherwise the card drifts 270 px while the
+  // collapse animates and you end up somewhere else again.
+  function closeCard(card, animate = true) {
     const dropdown = card.querySelector('.product-overview_card-tablet')
     const icon = card.querySelector('.icon_plus')
     if (!dropdown) return
@@ -1342,6 +1372,19 @@ mm.add('(max-width: 991px)', () => {
 
     const cta = card.querySelector('.product-overview_card-tablet .product_modal-cta')
     const textItems = dropdown.querySelectorAll('.product_modal-tab-text-item')
+
+    if (!animate) {
+      gsap.set(dropdown, { height: 0, overflow: 'hidden' })
+      gsap.set(textItems, { clipPath: 'inset(0 100% 0 0)' })
+      if (cta) gsap.set(cta, { clipPath: 'inset(0 0 100% 0)' })
+      if (icon) gsap.set(icon, { rotation: 0 })
+      textItems.forEach((t, i) => t.classList.toggle('is-active', i === 0))
+      card.querySelectorAll('.product-overview_card-image').forEach((img) => {
+        gsap.killTweensOf(img)
+        gsap.set(img, { opacity: img.classList.contains('is-main') ? 1 : 0 })
+      })
+      return
+    }
 
     // 1. Text items clip out right → left (reverse stagger)
     gsap.to(textItems, {
@@ -1511,8 +1554,12 @@ mm.add('(max-width: 991px)', () => {
         // its videos were destroyed
         if (currentItem.get(cardIndex) !== index || !video.isConnected) return
         if (video.readyState < 2) {
-          // Give up after ~20 s and keep the outgoing visual on screen
-          if ((waited += 100) > 20000) return
+          // Only on-screen time counts against the budget. Off screen the
+          // video is paused, so readyState is frozen and the timeout used to
+          // run out while nobody was looking: the reveal gave up for good and
+          // the card came back showing the image with the video playing
+          // invisibly behind it.
+          if (isCardVisible(card) && (waited += 100) > 20000) return
           setTimeout(revealWhenReady, 100)
           return
         }
@@ -1559,9 +1606,16 @@ mm.add('(max-width: 991px)', () => {
         closeCard(card)
         openCard = null
       } else {
-        if (openCard) closeCard(openCard)
-        openCardDropdown(card, cardIndex)
+        // Instant, so the card below is already at its final offset
+        if (openCard) closeCard(openCard, false)
+        // Marked visible up front: the observer only reports asynchronously,
+        // so at this instant the set can still be empty and a deliberate tap
+        // would open a card that never plays. The scroll below makes it true,
+        // and the observer corrects it either way.
+        visibleCards.add(card)
         openCard = card
+        openCardDropdown(card, cardIndex)
+        scrollCardIntoView(card)
       }
     }, { signal: _signal })
 

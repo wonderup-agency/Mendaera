@@ -76,6 +76,31 @@ Que un archivo comprima no dice nada sobre si renderiza igual. Esto sí. Las 14
 WOFF2 de `../assets/fonts-woff2/` pasaron las 336 comparaciones sin una
 diferencia.
 
+## Los scripts de About (2026-08-22)
+
+Los que se usaron para medir por qué About queda en blanco al scrollear. Ver
+la sección "About: por qué queda en blanco al scrollear" del README de `perf/`.
+
+```bash
+node about-blank.mjs /about mobile              # cuando aparece el primer pixel, y quien lo tapa
+node about-blank.mjs /about mobile --block-intellimize
+FAST=1 node about-blank.mjs /about mobile       # sin throttling, conexion de oficina
+node about-scroll.mjs mobile|desktop            # scrollea desde el arranque: captura + estado de cada video
+node about-blank-patched.mjs /about mobile      # sirve el HTML real con el cap del head inyectado
+node about-blank-patched.mjs /about mobile --baseline
+node about-vision.mjs mobile --cap --fix-poster # la seccion Vision, con y sin los dos fixes
+node intellimize-check.mjs /about /             # DOM con y sin el snippet: hay experimento o no
+node intellimize-activities.mjs                 # se lo pregunta a la API de Intellimize
+node about-poster.mjs mobile --prod             # traza poster -> primer frame -> stalls del video
+node about-fade.mjs mobile [--baseline]         # el fade del poster, con el JS nuevo inyectado
+node about-fade-visual.mjs                      # encuadre del poster de fondo vs el del <video>
+```
+
+`about-blank.mjs` usa el tamaño del PNG como proxy de "en blanco": un frame de un
+solo color comprime a menos de 12 KB. `about-blank-patched.mjs` y
+`about-vision.mjs` interceptan el documento y responden con el HTML parcheado, así
+se puede medir un fix del head antes de pegarlo en Webflow.
+
 ## `pages.mjs`
 
 Las 5 páginas del alcance, la ruta de Chrome y los valores de throttling. Para

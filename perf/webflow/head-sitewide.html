@@ -14,6 +14,57 @@
 
 <script>
 ;(function () {
+  // Webflow's Optimize (Intellimize) integration drops a full-page curtain over
+  // the site: it adds `anti-flicker` to <html>, and its own stylesheet is
+  //
+  //   .anti-flicker, .anti-flicker * { visibility: hidden !important;
+  //                                    opacity: 0 !important; }
+  //
+  // The class comes off when the 86 KB snippet finishes loading, or after the
+  // integration's own 4000 ms timeout — whichever happens first.
+  //
+  // Measured on About, slow 4G / 4x CPU: the entire page is invisible for
+  // 3.5 s, at every scroll position. Scrolling during that window shows white,
+  // and content appears the exact millisecond the class comes off (blank.about
+  // in audit/out: body.visibility flips from hidden to visible at 3512 ms and
+  // the first content pixel lands at 3512 ms). Blocking the snippet moves the
+  // first pixel to 1.2 s.
+  //
+  // And it is hiding nothing: intellimize.getSelectedVariationIds() returns
+  // undefined on all five pages, getActivities() only ever logs `pv` events,
+  // and the DOM is node-for-node identical with the snippet blocked
+  // (audit/intellimize-check.mjs). There is no variation to flash.
+  //
+  // So: cap the curtain instead of waiting out the 4 s. 600 ms is longer than
+  // the snippet takes on any warm/desktop connection, so a real experiment
+  // would still apply before the reveal; on a slow connection the page shows
+  // through rather than staying blank.
+  //
+  // The real fix is turning the integration off in Webflow — that also removes
+  // 86 KB of blocking JS. This block is what to keep if the pageview tracking
+  // has to stay. If an experiment ever ships, raise CAP or delete this block.
+  var CAP = 600
+  var html = document.documentElement
+  var CLASS = 'anti-flicker'
+
+  function lift() {
+    if (html.classList) html.classList.remove(CLASS)
+    else html.className = html.className.replace(new RegExp(' ?' + CLASS), '')
+  }
+
+  // This snippet is pasted at the top of the Head field, which Webflow renders
+  // *after* its integration script — so the class is already on <html> here and
+  // a plain timer is enough. The rAF guard keeps the reveal on a paint boundary
+  // when the main thread is busy parsing.
+  setTimeout(function () {
+    if (window.requestAnimationFrame) window.requestAnimationFrame(lift)
+    else lift()
+  }, CAP)
+})()
+</script>
+
+<script>
+;(function () {
   // The <video> elements carry their src in the markup, so the browser starts
   // downloading during HTML parsing — long before the footer custom code runs.
   // Measured on Home mobile (slow 4G / 4x CPU): 8.4 MB of video in flight

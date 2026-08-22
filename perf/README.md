@@ -55,6 +55,11 @@ Lo que resuelven estos bloques:
   25+ call sites existentes no cambian. Saca **11 MB** de la cola antes del primer
   pixel de contenido.
 - **chart.js** fuera del `<head>` de Technology y el CSS de Swiper inline.
+- **La cortina de Intellimize** — la integración de Webflow Optimize pone
+  `anti-flicker` en `<html>` con `visibility: hidden !important` sobre *todo*, y
+  la saca cuando termina de bajar su snippet de 86 KB o a los 4.000 ms. En About
+  con slow 4G eso deja la página entera invisible **3,5 s**, a cualquier altura
+  de scroll. El bloque nuevo del head la corta a 600 ms. Ver más abajo.
 
 ## `audit/` — harness de medición
 
@@ -90,6 +95,112 @@ que el video les come el ancho de banda y llegan a los 9 segundos.
 
 ---
 
+## About: por qué queda en blanco al scrollear
+
+Medido el 2026-08-22 sobre staging, slow 4G / 4× CPU (`audit/about-blank.mjs`,
+`audit/about-scroll.mjs`, `audit/about-vision.mjs`).
+
+**1. La cortina de Intellimize — 3,5 s de página invisible.** Es el blanco que se
+ve. No son las fuentes, ni las imágenes, ni GSAP: la integración de Webflow
+Optimize inyecta en el head
+
+```html
+<style>.anti-flicker, .anti-flicker * {visibility: hidden !important; opacity: 0 !important;}</style>
+<script>… n.className += " anti-flicker"; setTimeout(… , 4000) …</script>
+```
+
+y la clase sale recién cuando termina de bajar `cdn.intellimize.co/snippet/…js`
+(86 KB) o a los 4.000 ms. Como cuelga de `<html>`, tapa la página completa a
+cualquier altura de scroll. La medición: `body.visibility` pasa de `hidden` a
+`visible` a los **3.512 ms** y el primer pixel de contenido cae en el **mismo
+milisegundo**. Bloqueando el snippet, primer pixel a 1.252 ms.
+
+Y no está tapando nada. En las 5 páginas:
+
+- `intellimize.getSelectedVariationIds()` → `undefined`
+- `getActivities()` → sólo eventos `pv` (pageview)
+- `[data-wf-hidden-variation]` → 0 elementos
+- el DOM es nodo por nodo idéntico con el snippet bloqueado
+
+O sea: hoy no hay ningún experimento corriendo, y se pagan 4 segundos de cortina
+para no parpadear una variante que no existe.
+
+El bloque nuevo del `head-sitewide.html` la corta a 600 ms. Verificado sirviendo
+el HTML real con el bloque inyectado en la posición que ocupa hoy el snippet
+(`audit/about-blank-patched.mjs`): primer pixel **3.464 → 2.109 ms**. El piso son
+~1,2 s, que es cuando llega el CSS; los 600 ms de más son el margen para que un
+experimento futuro alcance a aplicarse en una conexión rápida.
+
+**El fix bueno es apagar la integración en Webflow** si nadie usa Optimize: se
+van además los 86 KB de JS bloqueante y los 6 puntos de score. El bloque del head
+es lo que hay que dejar si el tracking de pageviews tiene que seguir.
+
+**2. El poster de Vision — 460 KB.** Es el "y luego carga". El `<video>` de la
+sección Vision tiene `poster="…_thumb (17).jpg"`, 460 KB, y compite con las
+fuentes: termina a los 7,0 s en mobile y 8,3 s en desktop. La variante
+`-p-1080.avif` que Webflow ya hostea pesa **26 KB**. Está en `PASO-B-posters.md`,
+sin aplicar.
+
+Con las dos cosas juntas (cap + poster), la sección Vision pasa de aparecer a los
+**8,5 s** a aparecer a los **3,0 s**.
+
+**3. Los 74 MB de video de About.** Vision es `rendition/2160p`, **42,5 MB**, y
+tiene `data-play-on-view="true"`: arranca a descargar en cuanto entra al 50 % del
+viewport y se come todo el ancho de banda — las fotos del equipo no llegan hasta
+los 11-15 s. Después de 19 s bajando, `readyState` sigue en 0: no hay ni un frame
+para mostrar. El segundo video (Josh DeFonzo) es `rendition/1080p`, **31,7 MB**.
+Necesita renditions nuevas de Vimeo (punto 3 de la lista de abajo); el poster de
+26 KB tapa el síntoma visible, no el consumo.
+
+Detalle aparte, menor: los dos `<video>` de About comparten `id="home-vid"`. HTML
+inválido, igual que el `new-hero-video` duplicado de Home. No rompe nada porque
+el JS los toma por `data-home-video`.
+
+**4. El parpadeo del poster (arreglado en `about-page.js`).** El `poster` es un
+atributo del `<video>`, así que el elemento lo pinta sólo mientras
+`readyState < HAVE_CURRENT_DATA`. En el primer frame repinta y el poster
+desaparece para siempre — y la rendition 2160p se corta todo el tiempo en mobile.
+Traza en prod, slow 4G (`audit/about-poster.mjs`):
+
+```
+ 3394  waiting        readyState=0     ← play(), no hay nada para mostrar
+ 8990  loadedmetadata readyState=1
+ 9232  PRIMER FRAME
+ 9682  waiting        readyState=2     ← se cortó
+13317  playing
+13798  waiting        readyState=2     ← se cortó
+20194  playing
+```
+
+O sea: reproduce 450 ms, se corta 3,6 s, reproduce 480 ms, se corta 6,4 s. Eso es
+el "veo el poster, blanco y el video".
+
+El fix pinta el mismo poster como `background-image` del
+`[data-home-video="wrapper"]`, o sea **debajo** del video, y arranca el `<video>`
+en `opacity: 0`. Se revela con un fade de 0,4 s recién cuando hay un frame de
+verdad (`requestVideoFrameCallback`, con `loadeddata` de fallback). Ya no puede
+aparecer nada blanco: el poster está siempre pintado atrás. Verificado con
+`audit/about-fade.mjs` (la opacidad va 0 → 1 exactamente en el primer frame) y
+`audit/about-fade-visual.mjs` (el encuadre del background coincide con el
+`object-fit: cover` del video, 744×424 en los dos casos).
+
+El atributo `poster` se deja puesto a propósito: antes de la metadata es lo que
+le da al `<video>` su relación de aspecto, y sacarlo colapsa la caja de 16:9 al
+2:1 por defecto.
+
+**Ojo con el poster**: en prod quedó `_thumb (17).avif` (3840×2160, 100 KB), no
+`_thumb (17)-p-1080.avif` (1080×608, 26 KB). Cambiar sólo la extensión baja los
+bytes pero no los píxeles: son 8,3 MP para una caja de 372×209, ~33 MB de bitmap
+decodificado en el teléfono. La regla de `PASO-B-posters.md` es insertar
+`-p-1080` **además** de cambiar la extensión.
+
+**Los IDs de Vimeo de About**, para subir renditions más chicas:
+
+| Sección | ID de Vimeo | Hoy |
+|---|---|---|
+| Vision (autoplay al entrar en viewport) | `1168246536` | `rendition/2160p`, 42,5 MB |
+| Josh DeFonzo (click to play) | `1097555268` | `rendition/1080p`, 31,7 MB |
+
 ## Falta, y necesita el Designer
 
 1. Pegar los 9 archivos de `webflow/`.
@@ -102,6 +213,9 @@ que el video les come el ancho de banda y llegan a los 9 segundos.
    con `autoplay`, así que el oculto en el breakpoint actual también se descarga.
 6. `web.goodweb.host` en el template de press release: CSS bloqueante de terceros
    en el head, es la razón del FCP de 5,4 s de esa página.
+7. **Decidir si Webflow Optimize / Intellimize se queda.** Hoy no corre ningún
+   experimento y cuesta 3,5 s de página invisible más 86 KB de JS. Si se apaga,
+   sobra el bloque de anti-flicker del head.
 
 ## Descartado, con la medición que lo descarta
 
