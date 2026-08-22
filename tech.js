@@ -1020,9 +1020,55 @@ return () => {
 }
 })
 
+// ------------------------
+// Teal active state on the mobile accordion items
+// ------------------------
+// Mobile has no progress bar (that one is desktop only), so the item itself
+// is the only cue that its video is the one currently playing.
+// Injected as a stylesheet rather than inline styles so it never fights GSAP.
+;(function injectActiveItemStyle() {
+  if (document.getElementById('md-tab-active-style')) return
+  const style = document.createElement('style')
+  style.id = 'md-tab-active-style'
+  style.textContent = [
+    '@media (max-width: 991px) {',
+    '  .product-overview_card-tablet .product_modal-tab-text-item .product-overview_tab-link-tablet,',
+    '  .product-overview_card-tablet .product_modal-tab-text-item .product-overview_tab-link-tablet * {',
+    '    transition: color 0.3s ease;',
+    '  }',
+    '  .product-overview_card-tablet .product_modal-tab-text-item.is-active .product-overview_tab-link-tablet,',
+    '  .product-overview_card-tablet .product_modal-tab-text-item.is-active .product-overview_tab-link-tablet * {',
+    '    color: var(--base-color--teal, #26ca99);',
+    '  }',
+    '}',
+  ].join('\n')
+  document.head.appendChild(style)
+})()
+
 mm.add('(max-width: 991px)', () => {
   const _ac = new AbortController()
   const _signal = _ac.signal
+
+  // ---- Section fade-up: disabled on mobile ----
+  // The site-wide footer animates [data-animate], leaving the content at
+  // opacity 0 until its ScrollTrigger fires. On mobile this section is exactly
+  // what people scroll down for, and it read as empty for too long. That
+  // script runs before this file (inline #30 vs tech.js #31), so the triggers
+  // already exist by now. The divider lines are left alone: no data-animate.
+  // Note: killing them is not reverted when resizing up to desktop. Content
+  // stays visible, only the entrance animation is lost for that session.
+  const overviewSection = document.querySelector('.section_product-overview')
+  if (overviewSection && typeof ScrollTrigger !== 'undefined') {
+    overviewSection.querySelectorAll('[data-animate]').forEach((el) => {
+      ScrollTrigger.getAll().forEach((t) => { if (t.trigger === el) t.kill() })
+      // fade-up animates the element itself; stagger animates its children
+      const targets = el.getAttribute('data-animate') === 'stagger' ? [...el.children] : el
+      gsap.killTweensOf(targets)
+      // clearProps drops the opacity/transform the fade left behind, CSS wins
+      gsap.set(targets, { clearProps: 'opacity,transform' })
+    })
+  }
+
   // Tablet / Mobile: accordion dropdown on product cards
   const allCards = document.querySelectorAll('[data-modal-tab]')
   const modal = document.querySelector('[data-modal="product-features"]')
@@ -1052,7 +1098,7 @@ mm.add('(max-width: 991px)', () => {
 
   // Track dynamically created videos per card so we can clean them up
   const cardVideos = new Map()
-  // cardIndex -> ultimo item pedido, para descartar reveals que llegan tarde
+  // cardIndex -> last requested item, to discard reveals that arrive late
   const currentItem = new Map()
 
   // Initial state: dropdowns hidden, content clipped, images stacked for crossfade
@@ -1127,20 +1173,20 @@ mm.add('(max-width: 991px)', () => {
     }
   }
 
-  // ---- Auto-advance: los items de la card abierta se reproducen en loop ----
-  // Equivalente mobile de startAutoAdvance() de desktop: cuando termina el video
-  // del item actual pasa al siguiente, y despues del ultimo vuelve al primero.
+  // ---- Auto-advance: the open card's items play back to back, on a loop ----
+  // Mobile counterpart of desktop's startAutoAdvance(): when the current
+  // item's video ends it moves to the next, and wraps back to the first.
   //
-  // Ojo con el snippet de perf del <head>: le pone preload="none" a todo <video>
-  // que entra al DOM, incluidos estos que se crean por JS. Por eso la cadena
-  // corre solo con la card en pantalla — si no, el primer video arranca su
-  // descarga (varios MB) durante el load de la pagina y lo tira 4 s abajo.
-  const ITEM_FALLBACK_DURATION = 5 // segundos para items sin video
-  const METADATA_TIMEOUT = 8 // segundos: si no llega duration, se avanza igual
+  // Watch out for the perf snippet in the <head>: it forces preload="none" on
+  // every <video> entering the DOM, these JS-created ones included. That is
+  // why the chain only runs while the card is on screen — otherwise the first
+  // video starts its multi-MB download during page load and drags it 4 s down.
+  const ITEM_FALLBACK_DURATION = 5 // seconds, for items with no video
+  const METADATA_TIMEOUT = 8 // seconds: advance anyway if duration never lands
   let _cardAuto = null
 
-  // Cards en pantalla. La cadena se pausa cuando la card sale del viewport:
-  // sin esto el loop sigue bajando MB indefinidamente aunque no se vea.
+  // Cards currently on screen. The chain pauses when the card leaves the
+  // viewport: without this the loop keeps pulling MB down unseen, forever.
   const visibleCards = new Set()
   const cardObserver = typeof IntersectionObserver !== 'undefined'
     ? new IntersectionObserver((entries) => {
@@ -1155,7 +1201,7 @@ mm.add('(max-width: 991px)', () => {
     : null
   if (cardObserver) allCards.forEach((c) => cardObserver.observe(c))
 
-  // Sin IntersectionObserver se cae al comportamiento de siempre (reproducir)
+  // With no IntersectionObserver, fall back to the old behavior (just play)
   function isCardVisible(card) {
     return !cardObserver || visibleCards.has(card)
   }
@@ -1168,8 +1214,8 @@ mm.add('(max-width: 991px)', () => {
     _cardAuto = null
   }
 
-  // Card fuera de pantalla: se corta el video y el timer, pero la cadena
-  // se conserva para poder retomarla en el mismo item al volver
+  // Card off screen: stop the video and the timer, but keep the chain around
+  // so it can resume on the same item when the card comes back
   function pauseCardAutoAdvance() {
     if (!_cardAuto) return
     if (_cardAuto.timer) { clearTimeout(_cardAuto.timer); _cardAuto.timer = null }
@@ -1190,28 +1236,28 @@ mm.add('(max-width: 991px)', () => {
 
     const dropdown = card.querySelector('.product-overview_card-tablet')
     if (!dropdown) return
-    // El largo de la cadena lo manda desktop (videoDataMap), no los text-items:
-    // si en el modal se agrega un 4to video, mobile lo reproduce igual
+    // Desktop (videoDataMap) drives the chain length, not the text items: add
+    // a 4th video to the modal and mobile plays it too, untouched
     const videoCount = (videoDataMap[cardIndex] || []).length
     const total = Math.max(dropdown.querySelectorAll('.product_modal-tab-text-item').length, videoCount)
     if (total < 2) return
 
-    // Loop: despues del ultimo item vuelve al 0
+    // Loop: after the last item it wraps back to 0
     const nextIndex = (index + 1) % total
     function advance() {
-      // La card pudo cerrarse (o abrirse otra) mientras corria el timer
+      // The card may have closed (or another opened) while the timer ran
       if (openCard !== card) return stopCardAutoAdvance()
       setCardItem(card, cardIndex, nextIndex)
     }
 
-    // El proximo video se precarga recien cuando el actual ya se puede
-    // reproducir de corrido, para no competirle ancho de banda en mobile
+    // The next video is only preloaded once the current one can play through,
+    // so it never competes for bandwidth on mobile
     function preloadNext() {
       if (!isCardVisible(card)) return
       const nv = getOrCreateVideo(card, cardIndex, nextIndex)
       if (!nv || nv.preload === 'auto') return
-      // El observer del snippet de perf corre en un microtask al insertarse el
-      // elemento y pone preload="none"; este rAF corre despues, asi que gana
+      // The perf snippet's observer runs in a microtask on insertion and sets
+      // preload="none"; this rAF runs after it, so it wins
       requestAnimationFrame(() => {
         if (!nv.isConnected) return
         nv.preload = 'auto'
@@ -1221,7 +1267,7 @@ mm.add('(max-width: 991px)', () => {
 
     const video = cardVideos.get(`${cardIndex}-${index}`)
     if (!video) {
-      // Item sin video (fallback a imagen): timer fijo, igual que desktop
+      // Item with no video (image fallback): fixed timer, same as desktop
       const state = { card, index, video: null, timer: null }
       state.arm = () => {
         if (state.timer) clearTimeout(state.timer)
@@ -1232,15 +1278,15 @@ mm.add('(max-width: 991px)', () => {
       return
     }
 
-    video.loop = false // el loop es de la cadena, no del video suelto
+    video.loop = false // the loop belongs to the chain, not to one video
 
     const state = { card, index, video, timer: null }
-    // Red de seguridad por si 'ended' no llega (stall, codec, tab en background):
-    // se arma recien cuando se conoce la duracion real para no cortar el video.
+    // Safety net in case 'ended' never fires (stall, codec, backgrounded tab):
+    // armed only once the real duration is known, so it never cuts one short.
     state.arm = function armSafetyTimer() {
       if (state.timer) clearTimeout(state.timer)
       const d = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : null
-      // Sin metadata todavia: se reintenta en METADATA_TIMEOUT
+      // No metadata yet: retry after METADATA_TIMEOUT
       const secs = d ? d - video.currentTime + 2 : METADATA_TIMEOUT
       state.timer = setTimeout(advance, secs * 1000)
     }
@@ -1255,15 +1301,15 @@ mm.add('(max-width: 991px)', () => {
     state.listeners.forEach(([ev, fn]) => video.addEventListener(ev, fn))
 
     _cardAuto = state
-    // Fuera de pantalla no se arma nada: lo hace el observer al entrar
+    // Nothing is armed off screen: the observer does it when the card enters
     if (isCardVisible(card)) state.arm()
   }
 
-  // Activa un item: texto activo + visual + reinicia la cadena desde ese item
+  // Activate an item: active text + visual + restart the chain from there
   function setCardItem(card, cardIndex, index) {
     const dropdown = card.querySelector('.product-overview_card-tablet')
     const textItems = dropdown ? dropdown.querySelectorAll('.product_modal-tab-text-item') : []
-    // Si hubiera mas videos que text-items, el highlight se queda en el ultimo
+    // With more videos than text items, the highlight stays on the last one
     const activeText = Math.min(index, textItems.length - 1)
     textItems.forEach((t, i) => t.classList.toggle('is-active', i === activeText))
     switchCardImage(card, cardIndex, index)
@@ -1275,12 +1321,12 @@ mm.add('(max-width: 991px)', () => {
     const icon = card.querySelector('.icon_plus')
     if (!dropdown) return
 
-    // Se corta la cadena antes de destruir los videos que escucha
+    // Stop the chain before destroying the videos it listens to
     if (_cardAuto && _cardAuto.card === card) stopCardAutoAdvance()
 
     // Pause and destroy dynamic videos
     const cardIndex = [...allCards].indexOf(card)
-    // Invalida cualquier reveal pendiente antes de destruir los videos
+    // Invalidate any pending reveal before the videos are destroyed
     currentItem.delete(cardIndex)
     destroyCardVideos(cardIndex)
 
@@ -1325,9 +1371,9 @@ mm.add('(max-width: 991px)', () => {
     })
     if (icon) gsap.to(icon, { rotation: 0, duration: 0.4, ease: 'power3.inOut' })
 
-    // Reset to first item + main image. killTweensOf primero: si quedaba un
-    // fade a 0 corriendo, los dos tweens se peleaban por la opacidad y la
-    // imagen podia quedar apagada al cerrar.
+    // Reset to first item + main image. killTweensOf first: with a fade to 0
+    // still running, the two tweens fought over opacity and the image could
+    // end up stuck dark after closing.
     textItems.forEach((t, i) => t.classList.toggle('is-active', i === 0))
     const images = card.querySelectorAll('.product-overview_card-image')
     images.forEach((img) => {
@@ -1394,7 +1440,7 @@ mm.add('(max-width: 991px)', () => {
 
     if (icon) gsap.to(icon, { rotation: 45, duration: 0.35, ease: 'power2.out' })
 
-    // Arranca en el item 0 y sigue solo con los demas
+    // Starts on item 0 and walks the rest on its own
     setCardItem(card, cardIndex, 0)
   }
 
@@ -1402,11 +1448,11 @@ mm.add('(max-width: 991px)', () => {
   function switchCardImage(card, cardIndex, index) {
     const images = card.querySelectorAll('.product-overview_card-image')
 
-    // Item pedido para esta card: lo mira el reveal diferido de abajo para
-    // descartarse si mientras cargaba el video ya se paso a otro item
+    // Item requested for this card: the deferred reveal below reads it to
+    // bail out if another item was picked while the video was still loading
     currentItem.set(cardIndex, index)
 
-    // Videos dinamicos de esta card (sin el que se va a mostrar)
+    // Dynamic videos of this card (the incoming one excluded)
     const ownVideos = []
     for (const [key, v] of cardVideos) {
       if (key.startsWith(`${cardIndex}-`)) ownVideos.push(v)
@@ -1421,25 +1467,36 @@ mm.add('(max-width: 991px)', () => {
     // Try to show video for the selected item
     const video = getOrCreateVideo(card, cardIndex, index)
     if (video) {
-      // El visual anterior se deja en pantalla hasta que el video nuevo tenga
-      // frames. Un <video> sin frames es transparente y el poster puede tardar
-      // (queda encolado detras del propio video), asi que apagar la imagen
-      // antes deja el area vacia: medido 2-6 s con preload="none" y 1080p.
-      // El saliente se congela pero se deja visible: taparlo seria peor
+      // The outgoing visual stays on screen until the new video has frames. A
+      // frameless <video> is transparent and the poster can lag behind (it
+      // queues up behind the video itself), so hiding the image any earlier
+      // leaves the area blank: measured 2-6 s with preload="none" and 1080p.
+      // The outgoing one is frozen but left visible: covering it is worse
       ownVideos.forEach((v) => { if (v !== video) v.pause() })
-      video.style.zIndex = '3' // arriba del visual saliente mientras carga
+      video.style.zIndex = '3' // above the outgoing visual while it loads
       video.style.display = 'block'
       video.currentTime = 0
-      // Solo se reproduce (= solo se descarga) con la card en pantalla
+      // Only plays (= only downloads) while the card is on screen
       if (isCardVisible(card)) {
         video.preload = 'auto'
         video.play().catch(() => {})
       }
 
-      const reveal = () => {
-        // Llego tarde: ya se pidio otro item, o la card se cerro y se
-        // destruyeron sus videos
+      // Polled instead of listening for a single event: the `currentTime = 0`
+      // above starts a seek that drops readyState below 2, and 'loadeddata'
+      // never fires a second time on an already-loaded video, so waiting for
+      // it left every video stacked and visible at once.
+      let waited = 0
+      const revealWhenReady = () => {
+        // Arrived late: another item was requested, or the card closed and
+        // its videos were destroyed
         if (currentItem.get(cardIndex) !== index || !video.isConnected) return
+        if (video.readyState < 2) {
+          // Give up after ~20 s and keep the outgoing visual on screen
+          if ((waited += 100) > 20000) return
+          setTimeout(revealWhenReady, 100)
+          return
+        }
         video.style.zIndex = '2'
         ownVideos.forEach((v) => {
           if (v === video) return
@@ -1453,10 +1510,9 @@ mm.add('(max-width: 991px)', () => {
         })
       }
 
-      if (video.readyState >= 2) reveal()
-      else video.addEventListener('loadeddata', reveal, { once: true })
+      revealWhenReady()
     } else {
-      // Sin video para este item: se apagan los videos y manda la imagen
+      // No video for this item: turn the videos off, the image takes over
       ownVideos.forEach((v) => {
         v.pause()
         v.style.display = 'none'
@@ -1495,7 +1551,7 @@ mm.add('(max-width: 991px)', () => {
     textItems.forEach((item, index) => {
       item.addEventListener('click', (e) => {
         e.stopPropagation()
-        // El tap manual reinicia la cadena desde el item elegido
+        // A manual tap restarts the chain from the chosen item
         setCardItem(card, cardIndex, index)
       }, { signal: _signal })
     })
