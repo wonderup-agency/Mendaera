@@ -1052,6 +1052,8 @@ mm.add('(max-width: 991px)', () => {
 
   // Track dynamically created videos per card so we can clean them up
   const cardVideos = new Map()
+  // cardIndex -> ultimo item pedido, para descartar reveals que llegan tarde
+  const currentItem = new Map()
 
   // Initial state: dropdowns hidden, content clipped, images stacked for crossfade
   allCards.forEach((card) => {
@@ -1278,6 +1280,8 @@ mm.add('(max-width: 991px)', () => {
 
     // Pause and destroy dynamic videos
     const cardIndex = [...allCards].indexOf(card)
+    // Invalida cualquier reveal pendiente antes de destruir los videos
+    currentItem.delete(cardIndex)
     destroyCardVideos(cardIndex)
 
     // Also pause any static videos that might exist in the HTML
@@ -1321,10 +1325,13 @@ mm.add('(max-width: 991px)', () => {
     })
     if (icon) gsap.to(icon, { rotation: 0, duration: 0.4, ease: 'power3.inOut' })
 
-    // Reset to first item + main image
+    // Reset to first item + main image. killTweensOf primero: si quedaba un
+    // fade a 0 corriendo, los dos tweens se peleaban por la opacidad y la
+    // imagen podia quedar apagada al cerrar.
     textItems.forEach((t, i) => t.classList.toggle('is-active', i === 0))
     const images = card.querySelectorAll('.product-overview_card-image')
     images.forEach((img) => {
+      gsap.killTweensOf(img)
       gsap.to(img, { opacity: img.classList.contains('is-main') ? 1 : 0, duration: 0.4 })
     })
   }
@@ -1395,12 +1402,14 @@ mm.add('(max-width: 991px)', () => {
   function switchCardImage(card, cardIndex, index) {
     const images = card.querySelectorAll('.product-overview_card-image')
 
-    // Pause all existing dynamic videos for this card
-    for (const [key, video] of cardVideos) {
-      if (key.startsWith(`${cardIndex}-`)) {
-        video.pause()
-        video.style.display = 'none'
-      }
+    // Item pedido para esta card: lo mira el reveal diferido de abajo para
+    // descartarse si mientras cargaba el video ya se paso a otro item
+    currentItem.set(cardIndex, index)
+
+    // Videos dinamicos de esta card (sin el que se va a mostrar)
+    const ownVideos = []
+    for (const [key, v] of cardVideos) {
+      if (key.startsWith(`${cardIndex}-`)) ownVideos.push(v)
     }
 
     // Also pause any static HTML videos
@@ -1412,11 +1421,13 @@ mm.add('(max-width: 991px)', () => {
     // Try to show video for the selected item
     const video = getOrCreateVideo(card, cardIndex, index)
     if (video) {
-      // Hide all card images (is-main is an <img>, not a container)
-      images.forEach((img) => {
-        gsap.killTweensOf(img)
-        gsap.set(img, { opacity: 0 })
-      })
+      // El visual anterior se deja en pantalla hasta que el video nuevo tenga
+      // frames. Un <video> sin frames es transparente y el poster puede tardar
+      // (queda encolado detras del propio video), asi que apagar la imagen
+      // antes deja el area vacia: medido 2-6 s con preload="none" y 1080p.
+      // El saliente se congela pero se deja visible: taparlo seria peor
+      ownVideos.forEach((v) => { if (v !== video) v.pause() })
+      video.style.zIndex = '3' // arriba del visual saliente mientras carga
       video.style.display = 'block'
       video.currentTime = 0
       // Solo se reproduce (= solo se descarga) con la card en pantalla
@@ -1424,7 +1435,33 @@ mm.add('(max-width: 991px)', () => {
         video.preload = 'auto'
         video.play().catch(() => {})
       }
+
+      const reveal = () => {
+        // Llego tarde: ya se pidio otro item, o la card se cerro y se
+        // destruyeron sus videos
+        if (currentItem.get(cardIndex) !== index || !video.isConnected) return
+        video.style.zIndex = '2'
+        ownVideos.forEach((v) => {
+          if (v === video) return
+          v.pause()
+          v.style.display = 'none'
+          v.style.zIndex = '2'
+        })
+        images.forEach((img) => {
+          gsap.killTweensOf(img)
+          gsap.to(img, { opacity: 0, duration: 0.3, ease: 'power2.inOut' })
+        })
+      }
+
+      if (video.readyState >= 2) reveal()
+      else video.addEventListener('loadeddata', reveal, { once: true })
     } else {
+      // Sin video para este item: se apagan los videos y manda la imagen
+      ownVideos.forEach((v) => {
+        v.pause()
+        v.style.display = 'none'
+        v.style.zIndex = '2'
+      })
       // No video — fall back to image crossfade
       images.forEach((img) => {
         gsap.killTweensOf(img)
@@ -1476,6 +1513,7 @@ mm.add('(max-width: 991px)', () => {
     stopCardAutoAdvance()
     if (cardObserver) cardObserver.disconnect()
     visibleCards.clear()
+    currentItem.clear()
     openCard = null
     // Destroy all dynamic videos
     for (const [, video] of cardVideos) {
