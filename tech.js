@@ -1,5 +1,56 @@
 gsap.registerPlugin(ScrollTrigger)
 const mm = gsap.matchMedia()
+
+// ------------------------
+// Diagnostics for the product-overview component
+// ------------------------
+// Off unless asked for, so nothing reaches a normal visitor's console. Turn it
+// on with ?mddebug=1 on the URL, or once with localStorage.mdDebug = '1'.
+// Built for a phone inspected remotely, where breakpoints are impractical.
+const MD_DEBUG = (function () {
+  try {
+    return /[?&]mddebug=1/.test(location.search) ||
+      location.hash === '#mddebug' ||
+      localStorage.getItem('mdDebug') === '1'
+  } catch (e) { return false }
+})()
+const MD_T0 = typeof performance !== 'undefined' ? performance.now() : Date.now()
+function mdNow() {
+  return ((typeof performance !== 'undefined' ? performance.now() : Date.now()) - MD_T0) / 1000
+}
+function mdlog() {
+  if (!MD_DEBUG) return
+  const a = Array.prototype.slice.call(arguments)
+  a.unshift('[MD ' + mdNow().toFixed(2) + 's]')
+  console.log.apply(console, a)
+}
+// Short label for a video: its Vimeo id and rendition
+function mdVid(v) {
+  if (!v) return 'null'
+  const src = (v.querySelector && v.querySelector('source') && v.querySelector('source').src) || v.currentSrc || ''
+  const m = src.match(/playback\/(\d+)\/rendition\/(\w+)/)
+  return m ? m[1] + '@' + m[2] : '?'
+}
+function mdVidState(v) {
+  if (!v) return {}
+  let buffered = 0
+  try { buffered = v.buffered.length ? +v.buffered.end(v.buffered.length - 1).toFixed(2) : 0 } catch (e) {}
+  return {
+    rs: v.readyState, net: v.networkState, preload: v.preload, paused: v.paused,
+    t: +v.currentTime.toFixed(2), dur: Number.isFinite(v.duration) ? +v.duration.toFixed(2) : null,
+    buffered, z: v.style.zIndex, display: v.style.display, err: v.error ? v.error.code : null,
+  }
+}
+if (MD_DEBUG) {
+  mdlog('debug ON', {
+    viewport: innerWidth + 'x' + innerHeight,
+    dpr: devicePixelRatio,
+    connection: (navigator.connection && navigator.connection.effectiveType) || 'n/a',
+    downlinkMbps: (navigator.connection && navigator.connection.downlink) || 'n/a',
+    readyState: document.readyState,
+  })
+  addEventListener('load', function () { mdlog('window load') })
+}
 window.addEventListener('load', () => {
   ScrollTrigger.refresh()
   setTimeout(() => ScrollTrigger.refresh(), 1500)
@@ -1055,19 +1106,48 @@ mm.add('(max-width: 991px)', () => {
   // already exist by now. The divider lines are left alone: no data-animate.
   // Note: killing them is not reverted when resizing up to desktop. Content
   // stays visible, only the entrance animation is lost for that session.
-  const overviewSection = document.querySelector('.section_product-overview')
-  if (overviewSection && typeof ScrollTrigger !== 'undefined') {
+  function killOverviewFade(when) {
+    const overviewSection = document.querySelector('.section_product-overview')
+    if (!overviewSection || typeof ScrollTrigger === 'undefined') {
+      mdlog('fade-kill (' + when + '): nothing to do. section?', !!overviewSection,
+        '| ScrollTrigger?', typeof ScrollTrigger)
+      return
+    }
+    let killed = 0
     overviewSection.querySelectorAll('[data-animate]').forEach((el) => {
-      ScrollTrigger.getAll().forEach((t) => { if (t.trigger === el) t.kill() })
+      ScrollTrigger.getAll().forEach((t) => { if (t.trigger === el) { t.kill(); killed++ } })
       // fade-up animates the element itself; stagger animates its children
-      const targets = el.getAttribute('data-animate') === 'stagger' ? [...el.children] : el
+      const stagger = el.getAttribute('data-animate') === 'stagger'
+      const targets = stagger ? [...el.children] : el
+      const probe = stagger && el.children[0] ? el.children[0] : el
+      const before = getComputedStyle(probe).opacity
       gsap.killTweensOf(targets)
-      // Written out rather than cleared: the head stylesheet now holds the
-      // opacity 0 / y 20 start state, so clearProps would fall back to that
-      // and leave the section blank.
+      // Written out rather than cleared: clearProps would fall back to
+      // whatever start state the footer left behind
       gsap.set(targets, { opacity: 1, y: 0 })
+      mdlog('fade-kill (' + when + '):', el.getAttribute('data-animate'),
+        String(el.className).slice(0, 38), '| triggers killed:', killed,
+        '| opacity', before, '->', getComputedStyle(probe).opacity)
     })
+    mdlog('fade-kill (' + when + '): total killed', killed, '| still alive in the section:',
+      ScrollTrigger.getAll().filter((t) => t.trigger && overviewSection.contains(t.trigger))
+        .map((t) => String(t.trigger.className).slice(0, 28)))
   }
+
+  // The first call is the one that does the work: the site-wide footer block
+  // that creates these triggers runs before this file, so they already exist
+  // (measured: 3 killed, opacity 0 -> 1). The repeats are insurance for the day
+  // Webflow's code ordering changes -- if that block ever ended up below this
+  // file, a single early call would kill nothing and the section would read as
+  // empty until deep scroll. Measured on a 390x844 viewport with the kill
+  // missing: the cards only reached opacity 1 once the section top was 84 px
+  // from the top of the viewport. Every call is idempotent, so repeating is free.
+  killOverviewFade('immediately')
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => killOverviewFade('DOMContentLoaded'),
+      { once: true, signal: _signal })
+  }
+  addEventListener('load', () => killOverviewFade('load'), { once: true, signal: _signal })
 
   // Tablet / Mobile: accordion dropdown on product cards
   const allCards = document.querySelectorAll('[data-modal-tab]')
@@ -1095,6 +1175,13 @@ mm.add('(max-width: 991px)', () => {
     })
     videoDataMap[paneIndex] = items
   })
+  mdlog('discovery: cards', allCards.length, '| modal?', !!modal, '| panes', modalPanes.length,
+    '| videos per pane:', Object.keys(videoDataMap).map((k) =>
+      k + ':[' + videoDataMap[k].map((it) => {
+        if (!it || !it.src) return 'NO-SRC'
+        const m = it.src.match(/playback\/(\d+)\/rendition\/(\w+)/)
+        return m ? m[1] + '@' + m[2] : 'unrecognised'
+      }).join(' ') + ']').join('  '))
 
   // Track dynamically created videos per card so we can clean them up
   const cardVideos = new Map()
@@ -1162,6 +1249,14 @@ mm.add('(max-width: 991px)', () => {
     if (imageWrapper) imageWrapper.appendChild(video)
 
     cardVideos.set(key, video)
+    mdlog('video created', key, mdVid(video), '| poster?', !!poster)
+    if (MD_DEBUG) {
+      const label = key + ' ' + mdVid(video)
+      ;['loadedmetadata', 'loadeddata', 'canplay', 'canplaythrough', 'playing', 'pause',
+        'waiting', 'stalled', 'suspend', 'ended', 'error'].forEach((ev) => {
+        video.addEventListener(ev, () => mdlog('  video ' + label + ' -> ' + ev, mdVidState(video)))
+      })
+    }
     return video
   }
 
@@ -1202,6 +1297,7 @@ mm.add('(max-width: 991px)', () => {
         if (!v.isConnected) return
         v.preload = 'auto'
         try { v.load() } catch (e) {}
+        mdlog('warming', key, mdVid(v))
       })
       const onWarm = () => {
         v.removeEventListener('canplaythrough', onWarm)
@@ -1232,6 +1328,8 @@ mm.add('(max-width: 991px)', () => {
         entries.forEach((e) => {
           if (e.isIntersecting) visibleCards.add(e.target)
           else visibleCards.delete(e.target)
+          mdlog('visibility: card', [...allCards].indexOf(e.target) + 1,
+            e.isIntersecting ? 'ON screen' : 'OFF screen', '| open one?', openCard === e.target)
           if (openCard !== e.target) return
           if (e.isIntersecting) resumeCardAutoAdvance()
           else pauseCardAutoAdvance()
@@ -1302,6 +1400,7 @@ mm.add('(max-width: 991px)', () => {
     function advance() {
       // The card may have closed (or another opened) while the timer ran
       if (openCard !== card) return stopCardAutoAdvance()
+      mdlog('advance: card', cardIndex + 1, 'item', index + 1, '->', nextIndex + 1)
       setCardItem(card, cardIndex, nextIndex)
     }
 
@@ -1350,7 +1449,13 @@ mm.add('(max-width: 991px)', () => {
         // dropped around t=0.9 s of 6.1 s. While playback is still creeping
         // forward, give it another window instead of moving on.
         const creeping = !video.paused && video.currentTime > startedAt + 0.1
-        if (creeping && (state.waits = (state.waits || 0) + 1) <= 3) return state.arm()
+        if (creeping && (state.waits = (state.waits || 0) + 1) <= 3) {
+          mdlog('safety timer: still buffering, extension', state.waits, 'of 3',
+            mdVid(video), mdVidState(video))
+          return state.arm()
+        }
+        mdlog('safety timer fired -> advancing away from item', index + 1,
+          mdVid(video), mdVidState(video))
         advance()
       }, secs * 1000)
     }
@@ -1376,6 +1481,7 @@ mm.add('(max-width: 991px)', () => {
 
   // Activate an item: active text + visual + restart the chain from there
   function setCardItem(card, cardIndex, index) {
+    mdlog('setCardItem: card', cardIndex + 1, 'item', index + 1)
     const dropdown = card.querySelector('.product-overview_card-tablet')
     const textItems = dropdown ? dropdown.querySelectorAll('.product_modal-tab-text-item') : []
     // With more videos than text items, the highlight stays on the last one
@@ -1573,6 +1679,9 @@ mm.add('(max-width: 991px)', () => {
 
     // Try to show video for the selected item
     const video = getOrCreateVideo(card, cardIndex, index)
+    mdlog('switch: card', cardIndex + 1, 'item', index + 1, '| video?', mdVid(video),
+      '| card on screen?', isCardVisible(card))
+    const mdSwitchAt = mdNow()
     if (video) {
       // The outgoing visual stays on screen until the new video has frames. A
       // frameless <video> is transparent and the poster can lag behind (it
@@ -1618,10 +1727,16 @@ mm.add('(max-width: 991px)', () => {
           // run out while nobody was looking: the reveal gave up for good and
           // the card came back showing the image with the video playing
           // invisibly behind it.
-          if (isCardVisible(card) && (waited += 100) > 20000) return
+          if (isCardVisible(card) && (waited += 100) > 20000) {
+            mdlog('GAVE UP revealing card', cardIndex + 1, 'item', index + 1,
+              mdVid(video), 'after 20s', mdVidState(video))
+            return
+          }
           setTimeout(revealWhenReady, 100)
           return
         }
+        mdlog('REVEALED card', cardIndex + 1, 'item', index + 1, mdVid(video),
+          'after', (mdNow() - mdSwitchAt).toFixed(2) + 's', mdVidState(video))
         video.style.zIndex = '2'
         ownVideos.forEach((v) => {
           if (v === video) return
@@ -1662,9 +1777,13 @@ mm.add('(max-width: 991px)', () => {
     // Accordion toggle
     cardTop.addEventListener('click', () => {
       if (openCard === card) {
+        mdlog('TAP card', cardIndex + 1, '-> closing it')
         closeCard(card)
         openCard = null
       } else {
+        mdlog('TAP card', cardIndex + 1, '-> opening it | previously open:',
+          openCard ? [...allCards].indexOf(openCard) + 1 : 'none',
+          '| on screen?', isCardVisible(card))
         // Instant, so the card below is already at its final offset
         if (openCard) closeCard(openCard, false)
         // Marked visible up front: the observer only reports asynchronously,
