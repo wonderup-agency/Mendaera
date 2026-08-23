@@ -1242,7 +1242,40 @@ mm.add('(max-width: 991px)', () => {
     source.src = src
     source.type = 'video/mp4'
     video.appendChild(source)
-    if (poster) video.poster = poster
+    // The element paints its poster attribute only while readyState is below
+    // HAVE_CURRENT_DATA, and play() clears the show-poster flag straight away.
+    // On an empty buffer that leaves the box transparent, and since every
+    // ancestor is transparent too, the card image underneath shows through
+    // until the first frame decodes. Painting a placeholder as the element's
+    // own background closes that gap for good, at the same crop as
+    // object-fit: cover. Same fix the Home video cards use.
+    //
+    // The placeholder is the card's own cover image, not the modal poster: they
+    // are two different photos (`handheld-robot.avif` vs `thumb.avif`), so
+    // handing over to the poster put a third picture on screen and the sequence
+    // read as cover image, flash, video. With the cover image as the
+    // placeholder the hand-off is invisible and the only visible change is the
+    // video actually starting.
+    const cardImage = card.querySelector('.product-overview_card-image')
+    const paintPlaceholder = (url) => {
+      video.style.backgroundImage = `url("${url}")`
+      video.style.backgroundSize = 'cover'
+      video.style.backgroundPosition = 'center'
+      video.style.backgroundRepeat = 'no-repeat'
+    }
+    // currentSrc is the exact file already in the HTTP cache, so this costs no
+    // request. It is empty until the image loads, hence the fallback and the
+    // one-shot listener below.
+    const placeholder = (cardImage && cardImage.currentSrc) || poster
+    if (placeholder) {
+      video.poster = placeholder
+      paintPlaceholder(placeholder)
+    }
+    if (cardImage && !cardImage.currentSrc) {
+      cardImage.addEventListener('load', () => {
+        if (video.isConnected && cardImage.currentSrc) paintPlaceholder(cardImage.currentSrc)
+      }, { once: true })
+    }
 
     // Append inside the image wrapper of this card
     const imageWrapper = card.querySelector('.product-overview_card-image-wrapper')
@@ -1268,6 +1301,7 @@ mm.add('(max-width: 991px)', () => {
         video.remove()
         cardVideos.delete(key)
         warmed.delete(key)
+        if (warming === key) warming = null
       }
     }
   }
@@ -1282,8 +1316,46 @@ mm.add('(max-width: 991px)', () => {
   // 3 directly and it began from zero, with the previous frame frozen on
   // screen for seconds. Serialized on purpose: two files at once starve the
   // one that is playing.
+  const WARM_BUFFER_AHEAD = 4 // seconds of headroom before prefetching a sibling
+
+  // Seconds already buffered past the playhead, 0 if the playhead sits in no
+  // buffered range
+  function bufferAhead(v) {
+    try {
+      for (let i = 0; i < v.buffered.length; i++) {
+        if (v.buffered.start(i) <= v.currentTime && v.currentTime <= v.buffered.end(i)) {
+          return v.buffered.end(i) - v.currentTime
+        }
+      }
+    } catch (e) {}
+    return 0
+  }
+
+  // Key of the sibling currently downloading, or null. Without it the chain
+  // was not actually serial: warmNextVideo hangs off both 'playing' and
+  // 'canplaythrough' of the visible video, so two events warmed two siblings at
+  // once and the one on screen was starved. Traced on card 2 at 1.6 Mbps: both
+  // siblings reached readyState 3 by t=6 s while the playing video sat at
+  // currentTime 1.9 s for five seconds straight, playing but frozen.
+  let warming = null
+
   function warmNextVideo(card, cardIndex) {
     if (openCard !== card || !isCardVisible(card)) return
+    if (warming) return
+
+    // Only prefetch with real headroom. readyState 3 just means "enough to keep
+    // going for now", and gating on that still let a sibling's download starve
+    // the video on screen: traced at 1.6 Mbps, currentTime sat at 1.9 s for
+    // five seconds while playing. Seconds buffered ahead is self-tuning -- on a
+    // fast link the buffer builds and prefetching starts, on a link no quicker
+    // than the video's own bitrate it never does, which is right either way.
+    const showing = cardVideos.get(`${cardIndex}-${currentItem.get(cardIndex)}`)
+    if (showing && showing.readyState < 4 && bufferAhead(showing) < WARM_BUFFER_AHEAD) {
+      mdlog('warm: holding off, only', bufferAhead(showing).toFixed(1) + 's buffered ahead',
+        mdVidState(showing))
+      return
+    }
+
     const count = (videoDataMap[cardIndex] || []).length
     for (let i = 0; i < count; i++) {
       const key = `${cardIndex}-${i}`
@@ -1291,19 +1363,23 @@ mm.add('(max-width: 991px)', () => {
       warmed.add(key)
       const v = getOrCreateVideo(card, cardIndex, i)
       if (!v) continue
+      warming = key
+      const done = () => {
+        v.removeEventListener('canplaythrough', done)
+        v.removeEventListener('error', done)
+        if (warming === key) warming = null
+        warmNextVideo(card, cardIndex)
+      }
       // The head snippet's observer sets preload="none" in a microtask after
       // insertion; this rAF runs after it, so it wins
       requestAnimationFrame(() => {
-        if (!v.isConnected) return
+        if (!v.isConnected) return (warming === key) && (warming = null)
         v.preload = 'auto'
         try { v.load() } catch (e) {}
         mdlog('warming', key, mdVid(v))
       })
-      const onWarm = () => {
-        v.removeEventListener('canplaythrough', onWarm)
-        warmNextVideo(card, cardIndex)
-      }
-      v.addEventListener('canplaythrough', onWarm)
+      v.addEventListener('canplaythrough', done)
+      v.addEventListener('error', done)
       return
     }
   }
@@ -1836,6 +1912,7 @@ mm.add('(max-width: 991px)', () => {
     visibleCards.clear()
     currentItem.clear()
     warmed.clear()
+    warming = null
     openCard = null
     // Destroy all dynamic videos
     for (const [, video] of cardVideos) {

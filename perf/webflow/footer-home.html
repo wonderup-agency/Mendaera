@@ -553,6 +553,21 @@ if (videoCards.length > 0) {
     video.playsInline = true
   })
 
+  // The <video> box is transparent and every ancestor up to <body> is too, so
+  // whenever the element has nothing to paint — poster still decoding, or the
+  // poster dropped by play() before the first frame — the white body shows
+  // through under the overlay gradient. Painting the poster as the element's
+  // own background covers both gaps; the video paints over it once it has a
+  // frame, at the same crop as object-fit: cover.
+  cards.forEach(({ video }) => {
+    const poster = video.getAttribute('poster')
+    if (!poster) return
+    video.style.backgroundImage = `url("${poster}")`
+    video.style.backgroundSize = 'cover'
+    video.style.backgroundPosition = 'center'
+    video.style.backgroundRepeat = 'no-repeat'
+  })
+
   let active = null
 
   // estado inicial: todas atenuadas; cada breakpoint decide despues cual reproduce
@@ -560,10 +575,41 @@ if (videoCards.length > 0) {
     if (overlay) gsap.set(overlay, { autoAlpha: DIM_OPACITY })
   })
 
-  function playVideo(video) {
+  // The head snippet sets preload="none" on every video, so the buffer is empty
+  // until something asks for it. Measured on Home mobile / slow 4G: play() fired
+  // at 4.3 s with readyState 0 and the first frame only landed at 10.5 s.
+  function warm(video) {
+    if (video.dataset.mdWarm) return
+    video.dataset.mdWarm = '1'
+    video.preload = 'auto'
+    try {
+      video.load()
+    } catch (e) {}
+  }
+
+  function start(video) {
     const played = video.play()
     // play() rechaza si el browser bloquea el autoplay: no dejamos que corte el resto
     if (played && typeof played.catch === 'function') played.catch(() => {})
+  }
+
+  // play() clears the show-poster flag, so calling it on an empty buffer swaps a
+  // visible poster for an empty box until the first frame decodes. Buffer first,
+  // play when there is actually a frame to show.
+  function playVideo(item) {
+    const { video } = item
+    if (video.readyState >= 2) {
+      start(video)
+      return
+    }
+    warm(video)
+    video.addEventListener(
+      'loadeddata',
+      () => {
+        if (active === item) start(video)
+      },
+      { once: true }
+    )
   }
 
   function activate(item, duration = FADE) {
@@ -572,7 +618,7 @@ if (videoCards.length > 0) {
 
     cards.forEach((card) => {
       const isActive = card === item
-      if (isActive) playVideo(card.video)
+      if (isActive) playVideo(card)
       else card.video.pause()
       if (card.overlay) gsap.to(card.overlay, { autoAlpha: isActive ? 0 : DIM_OPACITY, duration })
     })
@@ -655,6 +701,24 @@ if (videoCards.length > 0) {
 
     cards.forEach((item) => observer.observe(item.card))
 
+    // Start buffering before the card is the active one: the observer above only
+    // fires at 50% visibility, and by then the wait for the first frame is the
+    // whole download. The swiper's overflow keeps the off-screen slides out of
+    // the intersection rect, so this only warms what the visitor can see.
+    const warmAhead = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return
+          warmAhead.unobserve(entry.target)
+          const item = cardsByElement.get(entry.target)
+          if (item) warm(item.video)
+        })
+      },
+      { rootMargin: '300px 0px' }
+    )
+
+    cards.forEach((item) => warmAhead.observe(item.card))
+
     const bound = cards.map((item) => {
       const onTap = () => {
         // tap en una slide que apenas asoma: la maneja el swipe, no lo fijamos
@@ -668,6 +732,7 @@ if (videoCards.length > 0) {
 
     return () => {
       observer.disconnect()
+      warmAhead.disconnect()
       bound.forEach(({ item, onTap }) => item.card.removeEventListener('click', onTap))
       deactivate(0)
     }
