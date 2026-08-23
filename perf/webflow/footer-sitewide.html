@@ -16,30 +16,30 @@
 
 <script src="https://unpkg.com/lenis@1.2.3/dist/lenis.min.js"></script>
 <script>
-// ============================================================
-// Lenis + nav auto-hide — reemplaza el embed actual del footer
-// site-wide. Envolver en <script>…</script> al pegar en Webflow.
-//
-// Que cambia respecto de la version anterior:
-//  - autoRaf en lugar del loop manual de requestAnimationFrame
-//  - el nodo del nav se resuelve una vez, no en cada evento de scroll
-//  - el estado va por classList y solo se escribe cuando cambia, en lugar
-//    de setear style.transform inline en cada tick
-//  - sin dependencia de jQuery para el arranque
-//  - respeta prefers-reduced-motion: ahi no se hijackea el scroll
-// ============================================================
+// Lenis + nav auto-hide. Site-wide footer, wrap in <script> when pasting.
 
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
 const lenis = reduceMotion
   ? null
   : new Lenis({
-      autoRaf: true,
+      // No autoRaf: the rAF loop comes from gsap.ticker below, so Lenis and
+      // ScrollTrigger stay on one clock.
       prevent: (node) => node.closest('[data-w-lightbox]') !== null,
     })
 
 if (lenis) {
-  // Arranca detenido para que no compita con el scroll restaurado del browser
+  // Lenis and ScrollTrigger have to share a clock. With Lenis on its own rAF
+  // loop, ScrollTrigger kept reading the native scroll offset a frame behind
+  // the position Lenis had already rendered, so triggers fired late and then
+  // caught up in a single frame -- that is the jump on the entrance
+  // animations. Same wiring as test/index.html.
+  lenis.on('scroll', ScrollTrigger.update)
+  gsap.ticker.add((time) => lenis.raf(time * 1000))
+  gsap.ticker.lagSmoothing(0)
+
+  // Parked until the DOM is done, so Lenis does not fight whatever moves the
+  // offset while the page is still parsing.
   lenis.stop()
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => lenis.start(), { once: true })
@@ -48,8 +48,8 @@ if (lenis) {
   }
 }
 
-// TODO Designer: agregar data-nav="component" al wrapper del nav y sacar el
-// fallback por clase.
+// TODO Designer: add data-nav="component" to the nav wrapper, then drop the
+// class fallback.
 const nav = document.querySelector('[data-nav="component"], .nav_component')
 
 if (nav) {
@@ -58,8 +58,8 @@ if (nav) {
 
   function syncNav(scroll) {
     const shouldHide = scroll >= HIDE_AT
-    // Sin este guard el toggle escribe (y fuerza recalculo de estilos) en cada
-    // frame de scroll, no solo cuando el estado cambia.
+    // Without this guard the toggle writes on every scroll frame instead of
+    // only when the state flips.
     if (shouldHide === hidden) return
     hidden = shouldHide
     nav.classList.toggle('is-nav-hidden', shouldHide)
@@ -76,8 +76,7 @@ if (nav) {
 </script>
 
 <script>
-// Bloque existente del footer site-wide: muestra el boton de test env
-// solo en staging. Copiado tal cual del sitio, sin cambios.
+// Existing site-wide footer block: test-env button, staging only.
 document.addEventListener('DOMContentLoaded', () => {
     if(document.querySelector('.is-test-env')){
       const button = document.querySelector('.is-test-env');
@@ -91,8 +90,9 @@ document.addEventListener('DOMContentLoaded', () => {
 </script>
 
 <script>
-// Bloque existente del footer site-wide: entradas fade-up / stagger y
-// animacion de las lineas divisorias. Copiado tal cual del sitio, sin cambios.
+// Existing site-wide footer block: fade-up / stagger entrances and the
+// divider line animations.
+
 // fade-up: individual elements fade in + slide up
 document.querySelectorAll('[data-animate="fade-up"]').forEach((el) => {
   gsap.set(el, { opacity: 0, y: 20 })
@@ -127,9 +127,7 @@ document.querySelectorAll('[data-animate="stagger"]').forEach((container) => {
     },
   })
 })
-// ------------------------
-// Line Animations — horizontal (center→edges) & vertical (top→bottom)
-// ------------------------
+// Line animations: horizontal (center->edges) and vertical (top->bottom).
 
 // Horizontal lines: scaleX 0→1 from center, then corner icons
 document.querySelectorAll('.horizontal_line-wrapper').forEach((wrapper) => {

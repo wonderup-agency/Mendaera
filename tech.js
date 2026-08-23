@@ -1062,8 +1062,10 @@ mm.add('(max-width: 991px)', () => {
       // fade-up animates the element itself; stagger animates its children
       const targets = el.getAttribute('data-animate') === 'stagger' ? [...el.children] : el
       gsap.killTweensOf(targets)
-      // clearProps drops the opacity/transform the fade left behind, CSS wins
-      gsap.set(targets, { clearProps: 'opacity,transform' })
+      // Written out rather than cleared: the head stylesheet now holds the
+      // opacity 0 / y 20 start state, so clearProps would fall back to that
+      // and leave the section blank.
+      gsap.set(targets, { opacity: 1, y: 0 })
     })
   }
 
@@ -1170,7 +1172,43 @@ mm.add('(max-width: 991px)', () => {
         video.pause()
         video.remove()
         cardVideos.delete(key)
+        warmed.delete(key)
       }
+    }
+  }
+
+  // Videos already told to fetch. Keeping the playing one in here matters:
+  // load() on it would restart playback from zero.
+  const warmed = new Set()
+
+  // Warm the open card's videos, one at a time. This used to hang off the
+  // playing video's 'canplaythrough' and only ever warmed the *next* item, so
+  // item 3 did not start downloading until item 2 could play through. Tap item
+  // 3 directly and it began from zero, with the previous frame frozen on
+  // screen for seconds. Serialized on purpose: two files at once starve the
+  // one that is playing.
+  function warmNextVideo(card, cardIndex) {
+    if (openCard !== card || !isCardVisible(card)) return
+    const count = (videoDataMap[cardIndex] || []).length
+    for (let i = 0; i < count; i++) {
+      const key = `${cardIndex}-${i}`
+      if (warmed.has(key)) continue
+      warmed.add(key)
+      const v = getOrCreateVideo(card, cardIndex, i)
+      if (!v) continue
+      // The head snippet's observer sets preload="none" in a microtask after
+      // insertion; this rAF runs after it, so it wins
+      requestAnimationFrame(() => {
+        if (!v.isConnected) return
+        v.preload = 'auto'
+        try { v.load() } catch (e) {}
+      })
+      const onWarm = () => {
+        v.removeEventListener('canplaythrough', onWarm)
+        warmNextVideo(card, cardIndex)
+      }
+      v.addEventListener('canplaythrough', onWarm)
+      return
     }
   }
 
@@ -1267,19 +1305,10 @@ mm.add('(max-width: 991px)', () => {
       setCardItem(card, cardIndex, nextIndex)
     }
 
-    // The next video is only preloaded once the current one can play through,
-    // so it never competes for bandwidth on mobile
+    // Warming starts once the current video can play through, so it never
+    // competes for bandwidth with the one on screen
     function preloadNext() {
-      if (!isCardVisible(card)) return
-      const nv = getOrCreateVideo(card, cardIndex, nextIndex)
-      if (!nv || nv.preload === 'auto') return
-      // The perf snippet's observer runs in a microtask on insertion and sets
-      // preload="none"; this rAF runs after it, so it wins
-      requestAnimationFrame(() => {
-        if (!nv.isConnected) return
-        nv.preload = 'auto'
-        try { nv.load() } catch (e) {}
-      })
+      warmNextVideo(card, cardIndex)
     }
 
     const video = cardVideos.get(`${cardIndex}-${index}`)
@@ -1312,7 +1341,18 @@ mm.add('(max-width: 991px)', () => {
       const d = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : null
       // No metadata yet: retry after METADATA_TIMEOUT
       const secs = d ? d - video.currentTime + 2 : METADATA_TIMEOUT
-      state.timer = setTimeout(advance, secs * 1000)
+      const startedAt = video.currentTime
+      state.timer = setTimeout(() => {
+        // A file whose bitrate is above the visitor's connection cannot play in
+        // real time, so 'ended' never arrives and this timer used to skip the
+        // item while it was still buffering -- nobody ever saw it. Measured on
+        // a 1.6 Mbps link: the 1080p items sit at 4.2 and 3.8 Mbps and got
+        // dropped around t=0.9 s of 6.1 s. While playback is still creeping
+        // forward, give it another window instead of moving on.
+        const creeping = !video.paused && video.currentTime > startedAt + 0.1
+        if (creeping && (state.waits = (state.waits || 0) + 1) <= 3) return state.arm()
+        advance()
+      }, secs * 1000)
     }
 
     const onMeta = () => { if (_cardAuto === state) state.arm() }
@@ -1320,6 +1360,11 @@ mm.add('(max-width: 991px)', () => {
       ['ended', advance],
       ['error', advance],
       ['loadedmetadata', onMeta],
+      // 'playing' is the moment the viewer sees motion: from here on the
+      // bandwidth is free to warm the siblings. 'canplaythrough' stays as the
+      // backstop for a video that was already buffered and never fires
+      // 'playing' again.
+      ['playing', preloadNext],
       ['canplaythrough', preloadNext],
     ]
     state.listeners.forEach(([ev, fn]) => video.addEventListener(ev, fn))
@@ -1540,8 +1585,22 @@ mm.add('(max-width: 991px)', () => {
       video.currentTime = 0
       // Only plays (= only downloads) while the card is on screen
       if (isCardVisible(card)) {
+        warmed.add(`${cardIndex}-${index}`)
         video.preload = 'auto'
         video.play().catch(() => {})
+        // disarm() in the head snippet is not idempotent for these: it sets
+        // preload="none" and returns before marking mdDisarmed, because they
+        // carry no autoplay attribute. Its observer fires in a microtask right
+        // after insertion and undoes the line above. Chrome keeps fetching
+        // since play() already began, but Safari drops the pending load and
+        // the element then sits with no data until something calls play()
+        // again -- which reads as having to tap a second time. This rAF runs
+        // after that microtask, so it is the last word.
+        requestAnimationFrame(() => {
+          if (!video.isConnected || currentItem.get(cardIndex) !== index) return
+          video.preload = 'auto'
+          if (video.paused) video.play().catch(() => {})
+        })
       }
 
       // Polled instead of listening for a single event: the `currentTime = 0`
@@ -1643,6 +1702,7 @@ mm.add('(max-width: 991px)', () => {
     if (cardObserver) cardObserver.disconnect()
     visibleCards.clear()
     currentItem.clear()
+    warmed.clear()
     openCard = null
     // Destroy all dynamic videos
     for (const [, video] of cardVideos) {

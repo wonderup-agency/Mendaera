@@ -14,6 +14,59 @@
 
 <script>
 ;(function () {
+  // Browsers default to scrollRestoration 'auto' and put the page back where it
+  // was on reload. It looks intermittent because the restore only lands if the
+  // document is already tall enough by then, and here the videos and CMS lists
+  // arrive late.
+  if (!('scrollRestoration' in history)) return
+  history.scrollRestoration = 'manual'
+
+  // Fragment links are not history restoration. Leave them alone.
+  if (location.hash) return
+
+  // Stop resetting as soon as the visitor scrolls, or the load handler drags
+  // them back mid-read: first paint here is ~1.2 s out on slow 4G.
+  var userMoved = false
+  function markUser() { userMoved = true }
+  var INTENT = ['wheel', 'touchstart', 'keydown', 'pointerdown']
+  for (var i = 0; i < INTENT.length; i++) {
+    addEventListener(INTENT[i], markUser, { passive: true, capture: true })
+  }
+
+  function toTop() {
+    if (!userMoved) window.scrollTo(0, 0)
+  }
+
+  // 'manual' covers the restore; these cover Webflow IX and Lenis moving the
+  // offset while the page settles.
+  toTop()
+  document.addEventListener('DOMContentLoaded', toTop, { once: true })
+  addEventListener('load', toTop, { once: true })
+
+  // bfcache restores reuse the live document, so nothing above fires. Drop this
+  // line if back navigation should keep the visitor's place.
+  addEventListener('pageshow', function (e) { if (e.persisted) toTop() })
+})()
+</script>
+
+<script>
+;(function () {
+  // Gate for the [data-animate] start state in the head stylesheet. The class
+  // only has to survive the gap between first paint and the footer script that
+  // hands these elements to GSAP; once GSAP owns them its inline opacity wins,
+  // so dropping the class later changes nothing. If the footer never runs the
+  // timer is what keeps the content from staying invisible.
+  var html = document.documentElement
+  if (!html.classList) return
+  html.classList.add('md-anim')
+  setTimeout(function () {
+    html.classList.remove('md-anim')
+  }, 2500)
+})()
+</script>
+
+<script>
+;(function () {
   // Webflow's Optimize (Intellimize) integration drops a full-page curtain over
   // the site: it adds `anti-flicker` to <html>, and its own stylesheet is
   //
@@ -253,5 +306,17 @@
 }
 .nav_component.is-nav-hidden {
   transform: translateY(-100%);
+}
+
+/* Goes with the [data-animate] entrances in the site-wide footer. GSAP applies
+   opacity 0 / y 20 only when that script runs, which is after first paint: the
+   element is painted in place, then blinks out and drops 20 px before fading
+   back. Setting the start state from the head means it is never painted wrong.
+   The md-anim gate comes from the head snippet and is dropped on a timer, so a
+   footer that never runs leaves content visible instead of blank. */
+html.md-anim [data-animate="fade-up"],
+html.md-anim [data-animate="stagger"] > * {
+  opacity: 0;
+  transform: translateY(20px);
 }
 </style>
