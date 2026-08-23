@@ -93,8 +93,25 @@ document.addEventListener('DOMContentLoaded', () => {
 // Existing site-wide footer block: fade-up / stagger entrances and the
 // divider line animations.
 
+// This block runs behind the whole blocking chain (jQuery, four Webflow
+// chunks, gsap + SplitText + ScrollTrigger + Flip, lenis, the page script), so
+// on a throttled mobile connection it executes anywhere from 1.5 s to 5.7 s
+// after navigation. Until then the markup paints normally. Hiding something the
+// visitor is already looking at, that late, is a regression rather than an
+// entrance: traced on Technology, the first style written to the hero title was
+// `opacity: 0` at 5726 ms, and it faded back in until 6431 ms. The heading
+// blinked out and returned a second later.
+//
+// An entrance animation only earns its keep on something you scroll to, so
+// anything already on screen by the time this runs is left exactly as painted.
+function isOnScreenAlready(el) {
+  const r = el.getBoundingClientRect()
+  return r.bottom > 0 && r.top < window.innerHeight
+}
+
 // fade-up: individual elements fade in + slide up
 document.querySelectorAll('[data-animate="fade-up"]').forEach((el) => {
+  if (isOnScreenAlready(el)) return
   gsap.set(el, { opacity: 0, y: 20 })
   gsap.to(el, {
     opacity: 1,
@@ -113,6 +130,7 @@ document.querySelectorAll('[data-animate="fade-up"]').forEach((el) => {
 document.querySelectorAll('[data-animate="stagger"]').forEach((container) => {
   const children = container.children
   if (!children.length) return
+  if (isOnScreenAlready(container)) return
   gsap.set(children, { opacity: 0, y: 20 })
   gsap.to(children, {
     opacity: 1,

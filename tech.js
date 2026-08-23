@@ -1692,9 +1692,15 @@ mm.add('(max-width: 991px)', () => {
       video.style.zIndex = '3' // above the outgoing visual while it loads
       video.style.display = 'block'
       video.currentTime = 0
+      // Marked before the visibility check on purpose. This is the item being
+      // shown, so the warm chain must never call load() on it -- that resets a
+      // playing video to zero. On the initial auto-open the observer has not
+      // reported yet, so isCardVisible is still false and the mark was being
+      // skipped: measured on reload, the video started at 519 ms and the warm
+      // chain reset it at 1533 ms, pushing first frame out to 3765 ms.
+      warmed.add(`${cardIndex}-${index}`)
       // Only plays (= only downloads) while the card is on screen
       if (isCardVisible(card)) {
-        warmed.add(`${cardIndex}-${index}`)
         video.preload = 'auto'
         video.play().catch(() => {})
         // disarm() in the head snippet is not idempotent for these: it sets
@@ -1814,6 +1820,14 @@ mm.add('(max-width: 991px)', () => {
     openCardDropdown(firstCard, 0, false)
     openCard = firstCard
   }
+
+  // Tells the <head> snippet the accordion took over. That snippet paints the
+  // collapsed state before this file arrives -- otherwise the first paint shows
+  // all three cards expanded with no active item, for around 370 ms on a
+  // throttled mobile connection -- and it drops the class if this flag never
+  // shows up, so a failed or blocked script can never leave the cards shut.
+  window.__mdAccordionReady = true
+  mdlog('accordion ready | open card 1 | cards', allCards.length)
 
   return () => {
     _ac.abort()
