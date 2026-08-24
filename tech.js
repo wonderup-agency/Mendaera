@@ -55,6 +55,48 @@ window.addEventListener('load', () => {
   ScrollTrigger.refresh()
   setTimeout(() => ScrollTrigger.refresh(), 1500)
 })
+
+// Both refreshes above run long before the lazy Lottie in section_target
+// renders. Its container measures 0 until the SVG lands and 758 px after, so
+// the section grows 540 px and every start below it -- the pinned video's
+// included -- is short by that much: the pin fires half a viewport early, the
+// title scrolls across the fixed video, and the video lands a second time when
+// the pin releases. Nothing in ScrollTrigger watches for content growing on its
+// own, so re-measure when the page height changes with the viewport unchanged.
+// A viewport change is ScrollTrigger's own resize path (and the address bar on
+// mobile), so those are left alone.
+;(function refreshOnLateLayoutShift() {
+  if (!window.ResizeObserver) return
+  const target = document.querySelector('.main-wrapper') || document.body
+  if (!target) return
+
+  let height = document.documentElement.scrollHeight
+  let vw = window.innerWidth
+  let vh = window.innerHeight
+  let timer = null
+
+  function check() {
+    timer = null
+    if (window.innerWidth !== vw || window.innerHeight !== vh) {
+      vw = window.innerWidth
+      vh = window.innerHeight
+      height = document.documentElement.scrollHeight
+      return
+    }
+    if (document.documentElement.scrollHeight === height) return
+    mdlog('late layout shift', { from: height, to: document.documentElement.scrollHeight })
+    ScrollTrigger.refresh()
+    // Read after the refresh so the pin spacers it re-measures are not seen as
+    // the next shift, which would loop.
+    height = document.documentElement.scrollHeight
+  }
+
+  new ResizeObserver(() => {
+    clearTimeout(timer)
+    timer = setTimeout(check, 200)
+  }).observe(target)
+})()
+
 document.querySelectorAll('[data-component="home-video"]').forEach((videoComponent) => {
   const wrapper = videoComponent.querySelector('[data-home-video="wrapper"]')
   const video = videoComponent.querySelector('[data-home-video="video"]')

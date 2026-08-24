@@ -77,7 +77,7 @@ if (homeHeroComponent) {
       isInFinal = false
     }
 
-    ScrollTrigger.create({
+    const enterTrigger = ScrollTrigger.create({
       start: 550,
       onEnter: () => {
         if (isInFinal) return
@@ -91,9 +91,11 @@ if (homeHeroComponent) {
       },
     })
 
+    let stickyTrigger = null
+
     // Reverse flip when sticky-wrapper unsticks; re-trigger when it re-sticks
     if (stickyWrapper && heroLayout) {
-      ScrollTrigger.create({
+      stickyTrigger = ScrollTrigger.create({
         trigger: heroLayout,
         start: () => `top+=${stickyWrapper.offsetTop} top+=5rem`,
         onLeaveBack: () => {
@@ -114,6 +116,46 @@ if (homeHeroComponent) {
           reversedBySticky = false
         },
       })
+    }
+
+    // Same move as the flips but with no tween. Flip writes position/size inline
+    // while it runs, so a container caught mid-flight has to be cleaned by hand.
+    function snapTo(final) {
+      gsap.killTweensOf([videoContainer, nonVideoEls, textWrapper, initialWrapper])
+      ;(final ? finalWrapper : initialWrapper).appendChild(videoContainer)
+      gsap.set(videoContainer, {
+        clearProps: 'position,top,right,bottom,left,width,height,margin,transform',
+      })
+      gsap.set(videoContainer, { borderRadius: final ? '0.75rem' : '0rem' })
+      gsap.set(nonVideoEls, { autoAlpha: final ? 0 : 1 })
+      isInFinal = final
+    }
+
+    // ScrollTrigger swallows its toggle callbacks while it refreshes, and a resize
+    // is a refresh: if the new layout puts the start past the current scroll, no
+    // onLeaveBack ever fires and the video stays parked in the small wrapper with
+    // the empty 100vh hero above it. Re-place it against the recalculated start
+    // instead of waiting for a callback that is not coming.
+    function resyncToScroll() {
+      // Never below the enter trigger: the forward flip only ever happens past it,
+      // and clamping this way also survives a sticky start that measures at 0.
+      const boundary = Math.max(enterTrigger.start, stickyTrigger ? stickyTrigger.start : 0)
+      const shouldBeFinal = enterTrigger.scroll() >= boundary
+      if (shouldBeFinal === isInFinal) return
+      snapTo(shouldBeFinal)
+      // enterTrigger will not fire onEnter again from here, so the re-flip on the
+      // way down is the sticky trigger's job, same as after a manual scroll up.
+      reversedBySticky = !shouldBeFinal
+    }
+
+    ScrollTrigger.addEventListener('refresh', resyncToScroll)
+    resyncToScroll()
+
+    return () => {
+      ScrollTrigger.removeEventListener('refresh', resyncToScroll)
+      // Mobile has its own video inside the small wrapper: leaving the container
+      // there stacks both and blanks out the hero.
+      snapTo(false)
     }
   })
 

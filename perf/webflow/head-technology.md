@@ -60,3 +60,41 @@ abiertas y usables en lugar de trabadas cerradas.
 
 `tech.js` pone `window.__mdAccordionReady = true` al terminar de inicializar el
 acordeon mobile, asi que el seguro no se dispara en el caso normal.
+
+---
+
+## Agregar al head: reservar el alto del Lottie de "Precision for every provider"
+
+`.target_lottie` no tiene alto propio en CSS: lo define el `<svg>` que inyecta
+el player de Webflow. Como el elemento es `data-loading="lazy"`, el SVG llega
+recien cuando la seccion se acerca al viewport, y ahi el contenedor pasa de 0 a
+758 px: `.section_target` crece de 450 a 990 px y todo lo que esta abajo baja
+540 px.
+
+Ese corrimiento es el bug del video de Product en desktop. ScrollTrigger guarda
+el `start` del pin como un numero absoluto de scroll y solo lo recalcula en un
+`refresh()`; los dos que hay corren en `load` y `load + 1.5 s`, siempre antes de
+que el Lottie cargue. Con el `start` viejo el pin dispara 540 px antes de tiempo:
+el titulo "Discover Focalist" queda encima del video fijo, y el video reaparece
+una segunda vez cuando el pin se suelta.
+
+El `viewBox` del Lottie es 1725x1725, cuadrado, asi que el alto se reserva con
+un aspect ratio:
+
+```html
+<style>
+  /* El player inyecta el SVG recien al entrar al viewport: sin esto la
+     seccion crece 540 px y corre el pin del video de abajo. */
+  .target_lottie {
+    aspect-ratio: 1 / 1;
+  }
+</style>
+```
+
+Alternativa equivalente y mas limpia: setear el aspect ratio en el Designer,
+sobre el div del Lottie. Si se hace ahi, este bloque no va.
+
+`tech.js` ademas tiene una red de seguridad (`refreshOnLateLayoutShift`) que
+llama a `ScrollTrigger.refresh()` cuando la pagina crece sola, para cubrir
+cualquier otro contenido lazy que aparezca despues. Las dos cosas se
+complementan: el CSS evita el salto, el JS lo corrige si igual pasa.
