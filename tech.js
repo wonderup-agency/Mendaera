@@ -247,6 +247,7 @@ const MendaeraCharts = (() => {
 
   function comparison(canvasId, config) {
     if (instances[canvasId]) {
+      if (instances[canvasId]._sizeObserver) instances[canvasId]._sizeObserver.disconnect()
       instances[canvasId].destroy()
       delete instances[canvasId]
     }
@@ -265,8 +266,6 @@ const MendaeraCharts = (() => {
     } = config
 
     Chart.defaults.font.family = FONT.family
-    Chart.defaults.responsive = true
-    Chart.defaults.maintainAspectRatio = false
 
     // Get initial sizes
     const container = canvas.parentElement
@@ -320,6 +319,9 @@ const MendaeraCharts = (() => {
           padding: { top: s.topPadding, right: 0, left: 0 },
         },
         animation: false,
+        // The canvas is sized by applySize() below, not by Chart.js.
+        responsive: false,
+        maintainAspectRatio: false,
         // Disable all hover/pointer interactions on the bars
         events: [],
         onResize(chart, size) {
@@ -470,8 +472,50 @@ const MendaeraCharts = (() => {
       ],
     })
 
-    // Animate datasets sequentially: grey bars first, then green bars
     const chart = instances[canvasId]
+
+    // Sizing is ours, not Chart.js's. Chart.js takes the height from the parent,
+    // but the parent (.chart_item, height auto) takes it from the canvas: with
+    // nothing definite in the chain the canvas ends up measuring itself and
+    // gains a few px on every resize (633 -> 664 -> ...) until it spills over
+    // the section below. Its min-height compounds it -- the wrapper is 320px
+    // from the tablet breakpoint down while the floor stays at 480.
+    // So: drop the floor, and measure the box with the canvas out of the
+    // layout, which is a height the canvas cannot feed back into.
+    const box = canvas.closest('.chart_container') || container
+    if (container) container.style.minHeight = '0px'
+    canvas.style.maxWidth = '100%'
+
+    function availableHeight() {
+      const display = canvas.style.display
+      canvas.style.display = 'none'
+      const h = box.clientHeight
+      canvas.style.display = display
+      return h
+    }
+
+    function applySize() {
+      const width = (container || box).clientWidth
+      if (!width) return
+      // Fallback for the widths where nothing up the chain sets a height.
+      const height = availableHeight() || Math.round(Math.min(Math.max(width * 0.6, 280), 480))
+      if (Math.round(chart.width) === width && Math.round(chart.height) === height) return
+      chart.resize(width, height)
+    }
+
+    applySize()
+
+    if (window.ResizeObserver) {
+      let sizeTimer = null
+      const observer = new ResizeObserver(() => {
+        clearTimeout(sizeTimer)
+        sizeTimer = setTimeout(applySize, 80)
+      })
+      observer.observe(box)
+      chart._sizeObserver = observer
+    }
+
+    // Animate datasets sequentially: grey bars first, then green bars
     const animDuration = 1200
     const easeOutQuart = (t) => 1 - Math.pow(1 - t, 4)
 
