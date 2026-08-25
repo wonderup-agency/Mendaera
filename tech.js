@@ -199,25 +199,25 @@ const MendaeraCharts = (() => {
     weight: '500',
   }
 
-  // Responsive sizes based on chart width + height
+  // Every size ramps with the chart width between the two designed ends
+  // (350px phone -> 1100px desktop). It used to switch at 400px, so any window
+  // in between got the full desktop scale -- 40px values and 18px labels in a
+  // 420px canvas, which run into each other and into the neighbouring bars.
+  function ramp(chartWidth, min, max) {
+    const t = Math.min(Math.max((chartWidth - 350) / 750, 0), 1)
+    return min + (max - min) * t
+  }
+
   // Gaps: desktop 3.125rem (50px) between groups, 0.5rem (8px) internal
   //        mobile  1rem (16px) between groups, 0.25rem (4px) internal
   function getSizes(chartWidth, chartHeight, numCategories, numDatasets) {
-    const isMobile = chartWidth < 400
-    const isLandscape = chartHeight > 0 && chartWidth / chartHeight > 1.4 && chartHeight < 500
+    // A short chart can't carry the full type scale either: the wrapper is
+    // 20rem from the tablet breakpoint down while the width stays wide.
+    const shortFactor = Math.min(Math.max((chartHeight || 460) / 460, 0.85), 1)
+    const size = (min, max) => Math.round(ramp(chartWidth, min, max) * shortFactor)
 
-    // Desired pixel gaps
-    let groupGap, barGap
-    if (isMobile) {
-      groupGap = 16
-      barGap = 4
-    } else if (isLandscape) {
-      groupGap = 30
-      barGap = 6
-    } else {
-      groupGap = 50  // 3.125rem
-      barGap = 8     // 0.5rem
-    }
+    const groupGap = ramp(chartWidth, 16, 50)
+    const barGap = ramp(chartWidth, 4, 8)
 
     // Calculate percentages from pixel gaps
     const catWidth = chartWidth / (numCategories || 4)
@@ -226,20 +226,17 @@ const MendaeraCharts = (() => {
     const barPercentage = Math.min(Math.max(1 - barGap / barSlot, 0.5), 0.98)
 
     return {
-      labelTop: isMobile ? 13 : isLandscape ? 14 : 18,
-      labelTopSub: isMobile ? 8 : isLandscape ? 9 : 11,
-      value: isMobile ? 24 : isLandscape ? 30 : 40,
-      legend: isMobile ? 10 : isLandscape ? 11 : 13,
+      labelTop: size(13, 18),
+      labelTopSub: size(8, 11),
+      value: size(24, 40),
       // Space reserved above the plot area for the category labels.
       // Must fit: label ascender + topGap + a little breathing room.
-      topPadding: isMobile ? 34 : isLandscape ? 36 : 44,
-      topGap: isMobile ? 8 : isLandscape ? 8 : 10,
-      topLineGap: isMobile ? 10 : isLandscape ? 10 : 12,
-      valueGap: isMobile ? 8 : isLandscape ? 10 : 14,
-      barRadius: isMobile ? 3 : 4,
+      topPadding: size(34, 44),
+      topGap: size(8, 10),
+      valueGap: size(8, 14),
+      barRadius: chartWidth < 400 ? 3 : 4,
       barPercentage,
       categoryPercentage,
-      legendPadding: isMobile ? 14 : isLandscape ? 16 : 24,
     }
   }
 
