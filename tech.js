@@ -626,6 +626,13 @@ if (modal) {
   const tabPanes = modal.querySelectorAll('.product_modal-tabs-pane')
   const paneWrapper = modal.querySelector('.product_modal-tabs-pane-wrapper')
 
+  // Image slides reuse .product_modal-tab-video, which Webflow hides by default;
+  // the JS only ever reveals <video>, so images have to be shown here. Their
+  // wrapper's display already decides whether they are visible.
+  modal.querySelectorAll('img[data-modal-video="video"]').forEach((img) => {
+    img.style.display = 'block'
+  })
+
   // ---- Item switching (text + image/video) within active pane ----
   function setActiveItem(pane, index) {
     const textItems = pane.querySelectorAll('.product_modal-tab-text-item')
