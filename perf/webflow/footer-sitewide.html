@@ -28,6 +28,10 @@ const lenis = reduceMotion
       prevent: (node) => node.closest('[data-w-lightbox]') !== null,
     })
 
+// The head's scroll restore and tech.js both need the instance, and a top-level
+// const in a custom-code block is not reachable from another block.
+window.lenis = lenis
+
 if (lenis) {
   // Lenis and ScrollTrigger have to share a clock. With Lenis on its own rAF
   // loop, ScrollTrigger kept reading the native scroll offset a frame behind

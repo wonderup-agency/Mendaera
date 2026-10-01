@@ -14,38 +14,89 @@
 
 <script>
 ;(function () {
-  // Browsers default to scrollRestoration 'auto' and put the page back where it
-  // was on reload. It looks intermittent because the restore only lands if the
-  // document is already tall enough by then, and here the videos and CMS lists
-  // arrive late.
+  // A reload lands where the visitor was, and only a reload does. The browser's
+  // own restore is not enough here: it fires once, before the videos and the
+  // CMS lists have given the document its full height, so a deep offset gets
+  // clamped short -- which is why it looked intermittent. We keep the offset
+  // ourselves and re-apply it while the page settles.
   if (!('scrollRestoration' in history)) return
   history.scrollRestoration = 'manual'
 
-  // Fragment links are not history restoration. Leave them alone.
-  if (location.hash) return
+  var KEY = 'md:scroll:' + location.pathname
+  var SETTLE = 2500
+  var holding = false
 
-  // Stop resetting as soon as the visitor scrolls, or the load handler drags
-  // them back mid-read: first paint here is ~1.2 s out on slow 4G.
-  var userMoved = false
-  function markUser() { userMoved = true }
+  function read() {
+    try { return parseInt(sessionStorage.getItem(KEY), 10) || 0 } catch (e) { return 0 }
+  }
+
+  function save() {
+    if (holding) return
+    try { sessionStorage.setItem(KEY, String(Math.round(window.scrollY))) } catch (e) {}
+  }
+
+  var queued = false
+  addEventListener('scroll', function () {
+    if (queued) return
+    queued = true
+    requestAnimationFrame(function () { queued = false; save() })
+  }, { passive: true })
+
+  // rAF gets no frame on the way out, so the last position is written here.
+  var leftAt = 0
+  addEventListener('pagehide', function () {
+    leftAt = Math.round(window.scrollY)
+    save()
+  })
+
+  // Anything the visitor does outranks the restore: on slow 4G the settle
+  // window is still open long after the page is readable.
+  function release() { holding = false }
   var INTENT = ['wheel', 'touchstart', 'keydown', 'pointerdown']
   for (var i = 0; i < INTENT.length; i++) {
-    addEventListener(INTENT[i], markUser, { passive: true, capture: true })
+    addEventListener(INTENT[i], release, { passive: true, capture: true })
   }
 
-  function toTop() {
-    if (!userMoved) window.scrollTo(0, 0)
+  // One pass is not enough: the offset only sticks once late content has made
+  // the document tall enough to hold it.
+  function hold(target, ms) {
+    holding = true
+    var until = performance.now() + ms
+    ;(function tick() {
+      if (!holding) { save(); return }
+      // Lenis tracks its own animated offset; going through it keeps that in
+      // sync, and force gets past the stop() it sits under until DOMContentLoaded.
+      if (window.lenis && window.lenis.scrollTo) {
+        window.lenis.scrollTo(target, { immediate: true, force: true })
+      } else {
+        window.scrollTo(0, target)
+      }
+      if (performance.now() < until) requestAnimationFrame(tick)
+      else { holding = false; save() }
+    })()
   }
 
-  // 'manual' covers the restore; these cover Webflow IX and Lenis moving the
-  // offset while the page settles.
-  toTop()
-  document.addEventListener('DOMContentLoaded', toTop, { once: true })
-  addEventListener('load', toTop, { once: true })
+  // A bfcache restore reuses the live document, so nothing below runs -- and
+  // 'manual' turns the UA restore off for it too. The offset comes from memory
+  // because the zeroing fires scroll events that would overwrite the stored one
+  // before this handler runs.
+  addEventListener('pageshow', function (e) {
+    if (e.persisted) hold(leftAt, 400)
+  })
 
-  // bfcache restores reuse the live document, so nothing above fires. Drop this
-  // line if back navigation should keep the visitor's place.
-  addEventListener('pageshow', function (e) { if (e.persisted) toTop() })
+  var target = read()
+
+  // A fragment link is not a restore, and a fresh navigation starts at the top
+  // even if this path was already visited in this session.
+  if (!target || location.hash) return
+  var entry = performance.getEntriesByType && performance.getEntriesByType('navigation')[0]
+  var type = entry ? entry.type
+    : performance.navigation && performance.navigation.type === 1 ? 'reload'
+    : performance.navigation && performance.navigation.type === 2 ? 'back_forward'
+    : ''
+  if (type !== 'reload' && type !== 'back_forward') return
+
+  hold(target, SETTLE)
 })()
 </script>
 

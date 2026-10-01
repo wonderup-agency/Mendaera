@@ -649,7 +649,9 @@ if (modal) {
     imageItems.forEach((item, i) => {
       const isActive = i === index
       const wasActive = item.classList.contains('is-active')
-      const video = item.querySelector('[data-modal-video="video"]')
+      // Tag-qualified on purpose: image slides carry the same attribute, and an
+      // <img> has no play()/duration, which used to throw and stall the chain
+      const video = item.querySelector('video[data-modal-video="video"]')
 
       gsap.killTweensOf(item)
 
@@ -675,7 +677,7 @@ if (modal) {
                   other.style.position = ''
                   other.style.zIndex = ''
                   gsap.set(other, { clipPath: '' })
-                  const v = other.querySelector('[data-modal-video="video"]')
+                  const v = other.querySelector('video[data-modal-video="video"]')
                   if (v) { v.pause(); v.style.display = 'none' }
                 }
               })
@@ -790,7 +792,7 @@ if (modal) {
     if (bar) bar.classList.add('is-active')
     const fill = bar?.querySelector('.tab-progress-bar__fill')
 
-    const video = wrapper.querySelector('[data-modal-video="video"]')
+    const video = wrapper.querySelector('video[data-modal-video="video"]')
     const hasVideo = !!video
 
     // --- Hover pause (on the visual wrapper area) ---
@@ -959,7 +961,7 @@ if (modal) {
 
   // ---- Pause all videos inside a pane ----
   function pausePaneVideos(pane) {
-    pane.querySelectorAll('[data-modal-video="video"]').forEach((v) => v.pause())
+    pane.querySelectorAll('video[data-modal-video="video"]').forEach((v) => v.pause())
   }
 
   // ---- Tab switching ----
@@ -995,7 +997,7 @@ if (modal) {
           item.classList.toggle('is-active', i === 0)
           item.style.cssText = i === 0 ? 'display:flex;position:relative;z-index:1;' : 'display:none;'
           gsap.set(item, { clipPath: '' })
-          const v = item.querySelector('[data-modal-video="video"]')
+          const v = item.querySelector('video[data-modal-video="video"]')
           if (v && i === 0) {
             v.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;'
             v.currentTime = 0
@@ -1032,7 +1034,7 @@ if (modal) {
       item.classList.toggle('is-active', i === 0)
       item.style.cssText = i === 0 ? 'display:flex;position:relative;z-index:1;' : 'display:none;'
       gsap.set(item, { clipPath: '' })
-      const v = item.querySelector('[data-modal-video="video"]')
+      const v = item.querySelector('video[data-modal-video="video"]')
       if (v) { v.pause(); v.style.display = 'none' }
     })
 
@@ -1057,7 +1059,7 @@ if (modal) {
       onComplete: () => {
         // Start video of first item now
         if (activeImg) {
-          const firstVideo = activeImg.querySelector('[data-modal-video="video"]')
+          const firstVideo = activeImg.querySelector('video[data-modal-video="video"]')
           if (firstVideo) {
             firstVideo.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;'
             firstVideo.currentTime = 0
@@ -1245,7 +1247,7 @@ mm.add('(max-width: 991px)', () => {
     const wrappers = pane.querySelectorAll('.product_modal-tab-image-wrapper')
     const items = []
     wrappers.forEach((wrapper) => {
-      const video = wrapper.querySelector('[data-modal-video="video"]')
+      const video = wrapper.querySelector('video[data-modal-video="video"]')
       if (video) {
         const source = video.querySelector('source')
         items.push({
@@ -1675,7 +1677,7 @@ mm.add('(max-width: 991px)', () => {
     destroyCardVideos(cardIndex)
 
     // Also pause any static videos that might exist in the HTML
-    card.querySelectorAll('[data-modal-video="video"]').forEach((v) => {
+    card.querySelectorAll('video[data-modal-video="video"]').forEach((v) => {
       v.pause()
       v.style.display = 'none'
     })
@@ -1831,7 +1833,7 @@ mm.add('(max-width: 991px)', () => {
     }
 
     // Also pause any static HTML videos
-    card.querySelectorAll('[data-modal-video="video"]').forEach((v) => {
+    card.querySelectorAll('video[data-modal-video="video"]').forEach((v) => {
       v.pause()
       v.style.display = 'none'
     })
